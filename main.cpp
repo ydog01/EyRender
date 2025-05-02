@@ -1,5 +1,5 @@
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
+#include <SDL.h>
+#include <SDL_ttf.h>
 #include <cmath>
 #include <vector>
 #include <string>
@@ -12,6 +12,7 @@ constexpr int PANEL_WIDTH = 300;
 constexpr int BUTTON_HEIGHT = 30;
 constexpr int ITEM_HEIGHT = 35;
 constexpr int LINE_HEIGHT = 2;
+constexpr int TOTAL_HEIGHT = ITEM_HEIGHT + LINE_HEIGHT;
 constexpr int MARGIN = 10;
 
 const int WINDOW_WIDTH = 1500;
@@ -78,8 +79,8 @@ struct MathRange
     double yMin = -10.0;
     double yMax = 10.0;
 
-    [[nodiscard]] double xSpan() const { return xMax - xMin; }
-    [[nodiscard]] double ySpan() const { return yMax - yMin; }
+    double xSpan() const { return xMax - xMin; }
+    double ySpan() const { return yMax - yMin; }
 };
 
 enum class EquationType
@@ -218,20 +219,20 @@ public:
     void handleScroll(int delta)
     {
         const auto visibleItems = static_cast<int>(
-            (WINDOW_HEIGHT - (BUTTON_HEIGHT * 2 + MARGIN * 3)) / ITEM_HEIGHT);
+            (WINDOW_HEIGHT - (BUTTON_HEIGHT * 2 + MARGIN * 3)) / TOTAL_HEIGHT);
         scrollOffset = std::max(0, std::min(
                                        static_cast<int>(static_cast<int64_t>(scrollOffset) - delta),
                                        static_cast<int>(equations.size()) - visibleItems));
     }
 
-    [[nodiscard]] const std::vector<Equation> &getEquations() const { return equations; }
-    [[nodiscard]] int getSelected() const { return selected; }
-    [[nodiscard]] bool isEditing() const { return editing != -1; }
-    [[nodiscard]] const SDL_Rect &getAddButton() const { return addButton; }
-    [[nodiscard]] const SDL_Rect &getDelButton() const { return delButton; }
-    [[nodiscard]] const std::string &getEditBuffer() const { return editBuffer; }
-    [[nodiscard]] int getCursorPos() const { return cursorPos; }
-    [[nodiscard]] int getScrollOffset() const { return scrollOffset; }
+    const std::vector<Equation> &getEquations() const { return equations; }
+    int getSelected() const { return selected; }
+    bool isEditing() const { return editing != -1; }
+    const SDL_Rect &getAddButton() const { return addButton; }
+    const SDL_Rect &getDelButton() const { return delButton; }
+    const std::string &getEditBuffer() const { return editBuffer; }
+    int getCursorPos() const { return cursorPos; }
+    int getScrollOffset() const { return scrollOffset; }
 };
 
 Point2D mathToScreen(const Point2D &mathPoint, const MathRange &range)
@@ -337,7 +338,7 @@ void drawCoordinateGrid(SDL_Renderer *renderer, TTF_Font *font, const MathRange 
         SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
         const SDL_Rect rect = {
             static_cast<int>(std::round(p.x)) - surface->w - 5, 
-            static_cast<int>(std::round(p.y)) - surface->h / 2, 
+            static_cast<int>(std::round(p.y)) - surface->h / 2, // ��ֱ����
             surface->w,
             surface->h};
         SDL_RenderCopy(renderer, texture, nullptr, &rect);
@@ -402,9 +403,9 @@ private:
         renderText("+ Add", addBtn.x + 10, addBtn.y + 3, addBtn.w - 20);
         renderText("- Delete", delBtn.x + 10, delBtn.y + 3, delBtn.w - 20);
 
-        visibleItems = (WINDOW_HEIGHT - (BUTTON_HEIGHT * 2 + MARGIN * 3)) / ITEM_HEIGHT;
+        visibleItems = (WINDOW_HEIGHT - (BUTTON_HEIGHT * 2 + MARGIN * 3)) / TOTAL_HEIGHT;
         const int startIdx = itemList.getScrollOffset();
-        const int endIdx = std::min(std::max(startIdx + visibleItems - 2, 0), static_cast<int>(itemList.getEquations().size()));
+        const int endIdx = std::min(startIdx + visibleItems, static_cast<int>(itemList.getEquations().size()));
 
         int yPos = MARGIN;
         for (int i = startIdx; i < endIdx; ++i)
@@ -439,7 +440,7 @@ private:
             const SDL_Rect lineRect{panelX + MARGIN, yPos + ITEM_HEIGHT, PANEL_WIDTH - (MARGIN << 1), LINE_HEIGHT};
             SDL_RenderFillRect(renderer, &lineRect);
 
-            yPos += ITEM_HEIGHT + LINE_HEIGHT;
+            yPos += TOTAL_HEIGHT;
         }
 
         if (SDL_GetTicks() - cursorBlink > 1000)
@@ -466,11 +467,11 @@ private:
         else
         {
             const int listStartY = MARGIN;
-            const int listEndY = MARGIN + visibleItems * ITEM_HEIGHT;
+            const int listEndY = MARGIN + visibleItems * TOTAL_HEIGHT;
 
             if (mouse.y >= listStartY && mouse.y < listEndY)
             {
-                const int itemIndex = itemList.getScrollOffset() + (mouse.y - listStartY) / ITEM_HEIGHT;
+                const int itemIndex = itemList.getScrollOffset() + (mouse.y - listStartY) / TOTAL_HEIGHT;
                 if (itemIndex < static_cast<int>(itemList.getEquations().size()))
                 {
                     itemList.select(itemIndex);
