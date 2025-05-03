@@ -17,6 +17,10 @@ bool MathVisualizer::init()
     if (!font)
         return false;
     itemList.updateButtonPositions(panelX);
+
+    Equation::evaluator.vars->insert("x",{});
+    Equation::evaluator.vars->insert("y",{});
+
     return true;
 }
 
@@ -121,38 +125,61 @@ void MathVisualizer::renderPanel()
     const int endIdx = std::min(startIdx + visibleItems, static_cast<int>(itemList.getEquations().size()));
 
     int yPos = MARGIN;
-    for (int i = startIdx; i < endIdx; ++i)
+    for (int i = startIdx; i < endIdx; ++i) 
     {
-        SDL_Rect itemRect = {panelX + MARGIN, yPos, PANEL_WIDTH - MARGIN * 2, ITEM_HEIGHT};
-        if (i == itemList.getSelected())
+        SDL_Rect itemRect = 
+        {
+            panelX + MARGIN, 
+            yPos, 
+            PANEL_WIDTH - MARGIN * 2, 
+            ITEM_HEIGHT
+        };
+
+        if (i == itemList.getSelected()) 
         {
             SDL_SetRenderDrawColor(renderer, SELECT_COLOR.r, SELECT_COLOR.g, SELECT_COLOR.b, 255);
             SDL_RenderFillRect(renderer, &itemRect);
         }
-        const std::string& text = itemList.isEditing() && i == itemList.getSelected() 
-            ? itemList.getEditBuffer() : itemList.getEquations()[i].expression;
+
+        const std::string& text = itemList.getEquations()[i].expression;
+
         renderText(text, itemRect.x + 5, itemRect.y + 3, itemRect.w - 10);
 
-        if (itemList.isEditing() && i == itemList.getSelected())
+        if (itemList.isEditing() && i == itemList.getSelected()) 
         {
-            const std::string beforeCursor = text.substr(0, itemList.getCursorPos());
-            int textWidth;
+            const std::string& editingText = itemList.getEquations()[i].expression;
+            const int cursorPos = itemList.getCursorPos();
+
+            std::string beforeCursor = editingText.substr(0, cursorPos);
+            int textWidth = 0;
             TTF_SizeText(font, beforeCursor.c_str(), &textWidth, nullptr);
-            int cursorX = itemRect.x + 5 + textWidth;
-            if (SDL_GetTicks() - cursorBlink < 500)
+
+            if (SDL_GetTicks() - cursorBlink < 500) 
             {
                 SDL_SetRenderDrawColor(renderer, EDIT_COLOR.r, EDIT_COLOR.g, EDIT_COLOR.b, 255);
-                SDL_RenderDrawLine(renderer, cursorX, itemRect.y + 2, cursorX, itemRect.y + ITEM_HEIGHT - 4);
+                SDL_RenderDrawLine(renderer, 
+                    itemRect.x + 5 + textWidth,  
+                    itemRect.y + 2,             
+                    itemRect.x + 5 + textWidth,  
+                    itemRect.y + ITEM_HEIGHT - 4 
+                );
             }
         }
 
         SDL_SetRenderDrawColor(renderer, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, GRID_COLOR.a);
-        SDL_Rect lineRect = {panelX + MARGIN, yPos + ITEM_HEIGHT, PANEL_WIDTH - MARGIN*2, LINE_HEIGHT};
+        SDL_Rect lineRect
+        {
+            panelX + MARGIN, 
+            yPos + ITEM_HEIGHT, 
+            PANEL_WIDTH - MARGIN * 2, 
+            LINE_HEIGHT
+        };
         SDL_RenderFillRect(renderer, &lineRect);
+
         yPos += TOTAL_HEIGHT;
     }
 
-    if (SDL_GetTicks() - cursorBlink > 1000)
+    if (SDL_GetTicks() - cursorBlink > 1000) 
         cursorBlink = SDL_GetTicks();
 }
 
@@ -173,11 +200,18 @@ void MathVisualizer::render()
 
 void MathVisualizer::run()
 {
+    const Uint32 targetDelay = 1000 / 60;
+    Uint32 frameStart, frameTime;
+    
     while (isRunning)
     {
+        frameStart = SDL_GetTicks();
         handleEvents();
         render();
-        SDL_Delay(16);
+        
+        frameTime = SDL_GetTicks() - frameStart;
+        if (frameTime < targetDelay)
+            SDL_Delay(targetDelay - frameTime);
     }
 }
 
@@ -198,7 +232,7 @@ void MathVisualizer::handlePanelClick(const SDL_MouseButtonEvent& e)
 
     if (SDL_PointInRect(&mouse, &addBtn))
     {
-        itemList.add("");
+        itemList.add(std::string());
         itemList.select(itemList.getEquations().size() - 1);
     }
     else if (SDL_PointInRect(&mouse, &delBtn))

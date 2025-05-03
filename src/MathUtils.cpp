@@ -1,7 +1,4 @@
 #include "MathUtils.hpp"
-#include <cmath>
-#include <sstream>
-#include <iomanip>
 
 Point2D Point2D::operator-(const Point2D& other) const
 {

@@ -1,0 +1,1477 @@
+------------------Constants.hpp------------------
+#pragma once
+#include <SDL.h>
+
+namespace Constants
+{
+    constexpr int PANEL_WIDTH = 300;
+    constexpr int BUTTON_HEIGHT = 30;
+    constexpr int ITEM_HEIGHT = 35;
+    constexpr int LINE_HEIGHT = 2;
+    constexpr int TOTAL_HEIGHT = ITEM_HEIGHT + LINE_HEIGHT;
+    constexpr int MARGIN = 10;
+    const int WINDOW_WIDTH = 1500;
+    const int WINDOW_HEIGHT = 800;
+
+    const SDL_Color BACKGROUND_COLOR = {40, 40, 40, 255};
+    const SDL_Color GRID_COLOR = {80, 80, 80, 255};
+    const SDL_Color AXIS_COLOR = {200, 200, 200, 255};
+    const SDL_Color TEXT_COLOR = {255, 255, 255, 255};
+    const SDL_Color PANEL_COLOR = {60, 60, 60, 255};
+    const SDL_Color BUTTON_COLOR = {80, 80, 160, 255};
+    const SDL_Color SELECT_COLOR = {100, 100, 200, 255};
+    const SDL_Color EDIT_COLOR = {150, 150, 250, 255};
+}
+------------------Equation.cpp------------------
+#include "Equation.hpp"
+
+eval::evaluator<char, double> Equation::evaluator = eval_init::create_real_eval<double>();
+------------------Equation.hpp------------------
+#pragma once
+#include <string>
+#include "eval_init.hpp"
+
+enum class RelationalOperator : int
+{
+    EQUAL,
+    NOT_EQUAL,
+    LESS_THAN,
+    LESS_THAN_OR_EQUAL,
+    GREATER_THAN,
+    GREATER_THAN_OR_EQUAL,
+    INVALID
+};
+
+struct Equation
+{
+    static eval::evaluator<char,double> evaluator;
+    std::string expression;
+    RelationalOperator type;
+    eval::epre<double> value;//left - right
+};
+------------------ItemList.cpp------------------
+#include "ItemList.hpp"
+#include <iterator>
+
+void ItemList::updateButtonPositions(int panelX)
+{
+    using namespace Constants;
+    addButton = {
+        panelX + MARGIN,
+        WINDOW_HEIGHT - BUTTON_HEIGHT * 2 - MARGIN * 2,
+        PANEL_WIDTH - MARGIN * 2,
+        BUTTON_HEIGHT
+    };
+    delButton = {
+        panelX + MARGIN,
+        WINDOW_HEIGHT - BUTTON_HEIGHT - MARGIN,
+        PANEL_WIDTH - MARGIN * 2,
+        BUTTON_HEIGHT
+    };
+}
+
+void ItemList::add(const std::string& item)
+{
+    Equation eq;
+    eq.expression = item;
+    equations.push_back(std::move(eq));
+}
+
+void ItemList::removeSelected()
+{
+    if (selected >= 0 && selected < static_cast<int>(equations.size()))
+    {
+        equations.erase(equations.begin() + selected);
+        selected = -1;
+        cursorPos = 0;
+    }
+}
+
+void ItemList::endEdit()
+{
+    if (selected == -1)
+        return;
+
+    Equation& eq = equations[selected];
+    eq.value.clear();
+    eq.type = RelationalOperator::INVALID;
+
+    selected = -1;
+    cursorPos = 0;
+
+    if (eq.expression.empty())
+        return;
+
+    size_t pos = 0;
+    while (eq.type == RelationalOperator::INVALID)
+    {
+        if (pos == eq.expression.size()-1)
+            break;
+
+        switch (eq.expression[pos])
+        {
+            case '=': 
+                eq.type = RelationalOperator::EQUAL;
+                break;
+            case '<':
+                if (eq.expression[pos+1] == '=')
+                    eq.type = RelationalOperator::LESS_THAN_OR_EQUAL;
+                else
+                    eq.type = RelationalOperator::LESS_THAN;
+                break;
+            case '>':
+                if (eq.expression[pos+1] == '=')
+                    eq.type = RelationalOperator::GREATER_THAN_OR_EQUAL;
+                else
+                    eq.type = RelationalOperator::GREATER_THAN;
+                break;
+            case '!':
+                if (eq.expression[pos+1] == '=')
+                    eq.type = RelationalOperator::NOT_EQUAL;
+                break;
+            default:
+                pos++;
+                break;
+        }
+    }
+
+    if (eq.type == RelationalOperator::INVALID)
+        return;
+
+    try 
+    {
+        Equation::evaluator.parse(eq.value, eq.expression.substr(0,pos));
+        pos++;
+        if (eq.type == RelationalOperator::NOT_EQUAL || eq.type == RelationalOperator::GREATER_THAN_OR_EQUAL || eq.type == RelationalOperator::LESS_THAN_OR_EQUAL)
+            pos++;
+            
+        auto temp = Equation::evaluator.parse(eq.expression.substr(pos));
+
+        eq.value.consts.insert(eq.value.consts.end(), temp.consts.begin(), temp.consts.end());
+        eq.value.funcs.insert(eq.value.funcs.end(), temp.funcs.begin(), temp.funcs.end());
+        eq.value.vars.insert(eq.value.vars.end(), temp.vars.begin(), temp.vars.end());
+        eq.value.index += temp.index;
+        eq.value.index.push_back('f');
+        eq.value.funcs.push_back(Equation::evaluator.infix_ops->search("-")->data);
+    }
+    catch (...)
+    {
+        eq.value.clear();
+        eq.type = RelationalOperator::INVALID;
+    }
+}
+
+void ItemList::handleInput(const SDL_Event& e)
+{
+    if (selected == -1)
+        return;
+
+    Equation& eq = equations[selected];
+    if (e.type == SDL_TEXTINPUT)
+    {
+        eq.expression.insert(cursorPos, e.text.text);
+        cursorPos += strlen(e.text.text);
+    }
+    else if (e.type == SDL_KEYDOWN)
+    {
+        switch (e.key.keysym.sym)
+        {
+            case SDLK_RETURN:
+                endEdit();
+                break;
+            case SDLK_LEFT:
+                if (cursorPos > 0)
+                    cursorPos--;
+                break;
+            case SDLK_RIGHT:
+                if (cursorPos < static_cast<int>(eq.expression.size()))
+                    cursorPos++;
+                break;
+            case SDLK_BACKSPACE:
+                if (cursorPos > 0)
+                {
+                    eq.expression.erase(cursorPos - 1, 1);
+                    cursorPos--;
+                }
+                break;
+            case SDLK_DELETE:
+                if (cursorPos < static_cast<int>(eq.expression.size()))
+                    eq.expression.erase(cursorPos, 1);
+                break;
+        }
+    }
+}
+
+void ItemList::select(int index)
+{
+    if (selected != -1)
+        endEdit();
+
+    if (index >= 0 && index < static_cast<int>(equations.size()))
+    {
+        selected = index;
+        cursorPos = static_cast<int>(equations[selected].expression.size());
+    }
+}
+
+void ItemList::handleScroll(int delta)
+{
+    using namespace Constants;
+    int visibleItems = (WINDOW_HEIGHT - (BUTTON_HEIGHT * 2 + MARGIN * 3)) / TOTAL_HEIGHT;
+    scrollOffset = std::max(0, std::min(scrollOffset - delta, static_cast<int>(equations.size()) - visibleItems));
+}
+------------------ItemList.hpp------------------
+#pragma once
+#include "Equation.hpp"
+#include "Constants.hpp"
+#include <vector>
+
+class ItemList
+{
+private:
+    std::vector<Equation> equations;
+    int selected = -1;
+    int cursorPos = 0;
+    int scrollOffset = 0;
+    SDL_Rect addButton{0, 0, 0, 0};
+    SDL_Rect delButton{0, 0, 0, 0};
+
+public:
+    ItemList() = default;
+    void updateButtonPositions(int panelX);
+    void add(const std::string& item);
+    void removeSelected();
+    void endEdit();
+    void handleInput(const SDL_Event& e);
+    void select(int index);
+    void handleScroll(int delta);
+    
+    const std::vector<Equation>& getEquations() const { return equations; }
+    int getSelected() const { return selected; }
+    bool isEditing() const { return selected != -1; }
+    const SDL_Rect& getAddButton() const { return addButton; }
+    const SDL_Rect& getDelButton() const { return delButton; }
+    int getCursorPos() const { return cursorPos; }
+    int getScrollOffset() const { return scrollOffset; }
+};
+------------------MathUtils.cpp------------------
+#include "MathUtils.hpp"
+
+Point2D Point2D::operator-(const Point2D& other) const
+{
+    return {x - other.x, y - other.y};
+}
+
+double MathRange::xSpan() const
+{
+    return xMax - xMin;
+}
+
+double MathRange::ySpan() const
+{
+    return yMax - yMin;
+}
+
+std::string formatNumber(double value, int precision)
+{
+    if (std::isnan(value) || std::isinf(value))
+        return "NaN";
+    std::ostringstream oss;
+    const double absValue = std::abs(value);
+    if ((absValue >= 1e4 || (absValue > 0 && absValue <= 1e-4)) && absValue != 0.0)
+    {
+        oss << std::scientific << std::setprecision(std::max(1, precision - 1));
+    }
+    else
+    {
+        oss << std::fixed << std::setprecision(precision);
+    }
+    oss << value;
+    std::string s = oss.str();
+    
+    size_t dot_pos = s.find('.');
+    if (dot_pos != std::string::npos)
+    {
+        s = s.substr(0, s.find_last_not_of('0', s.size() - 1) + 1);
+        if (s.back() == '.')
+            s.pop_back();
+    }
+
+    size_t e_pos = s.find("e+00");
+    if (e_pos != std::string::npos)
+        s.replace(e_pos, 4, "e");
+    if ((e_pos = s.find("e0")) != std::string::npos)
+        s.erase(e_pos + 1, 1);
+    return s;
+}
+
+Point2D mathToScreen(const Point2D& mathPoint, const MathRange& range)
+{
+    return {
+        (mathPoint.x - range.xMin) / range.xSpan() * 1200.0,
+        (range.yMax - mathPoint.y) / range.ySpan() * Constants::WINDOW_HEIGHT
+    };
+}
+
+Point2D screenToMath(int sx, int sy, const MathRange& range)
+{
+    return {
+        range.xMin + static_cast<double>(sx) * range.xSpan() / 1200.0,
+        range.yMax - static_cast<double>(sy) * range.ySpan() / Constants::WINDOW_HEIGHT
+    };
+}
+------------------MathUtils.hpp------------------
+#pragma once
+#include <cmath>
+#include <sstream>
+#include <iomanip>
+#include "Constants.hpp"
+
+struct Point2D
+{
+    double x = 0.0;
+    double y = 0.0;
+    Point2D operator-(const Point2D& other) const;
+};
+
+struct MathRange
+{
+    double xMin = -15.0, xMax = 15.0;
+    double yMin = -10.0, yMax = 10.0;
+    double xSpan() const;
+    double ySpan() const;
+};
+
+std::string formatNumber(double value, int precision);
+Point2D mathToScreen(const Point2D& mathPoint, const MathRange& range);
+Point2D screenToMath(int sx, int sy, const MathRange& range);
+------------------MathVisualizer.cpp------------------
+#include "MathVisualizer.hpp"
+
+bool MathVisualizer::init()
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0)
+        return false;
+    window = SDL_CreateWindow("Math Visualizer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                              Constants::WINDOW_WIDTH, Constants::WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
+    if (!window)
+        return false;
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    if (!renderer)
+        return false;
+    if (TTF_Init() == -1)
+        return false;
+    font = TTF_OpenFont("C:/Windows/Fonts/msyh.ttc", 18);
+    if (!font)
+        return false;
+    itemList.updateButtonPositions(panelX);
+
+    Equation::evaluator.vars->insert("x",{});
+    Equation::evaluator.vars->insert("y",{});
+
+    return true;
+}
+
+void MathVisualizer::handleEvents()
+{
+    SDL_Event e;
+    while (SDL_PollEvent(&e))
+    {
+        itemList.handleInput(e);
+        switch (e.type)
+        {
+            case SDL_QUIT:
+                isRunning = false;
+                break;
+            case SDL_MOUSEBUTTONDOWN:
+                if (e.button.x > panelX)
+                    handlePanelClick(e.button);
+                else if (e.button.button == SDL_BUTTON_LEFT)
+                {
+                    isDragging = true;
+                    dragStart = {static_cast<double>(e.button.x), static_cast<double>(e.button.y)};
+                    dragStartRange = currentRange;
+                    itemList.endEdit();
+                }
+                break;
+            case SDL_MOUSEBUTTONUP: 
+                if (e.button.button == SDL_BUTTON_LEFT)
+                    isDragging = false;
+                break;
+            case SDL_MOUSEMOTION:
+                if (isDragging)
+                {
+                    Point2D current = {static_cast<double>(e.motion.x), static_cast<double>(e.motion.y)};
+                    Point2D delta = screenToMath(current.x, current.y, currentRange) - 
+                                    screenToMath(dragStart.x, dragStart.y, currentRange);
+                    currentRange.xMin = dragStartRange.xMin - delta.x;
+                    currentRange.xMax = dragStartRange.xMax - delta.x;
+                    currentRange.yMin = dragStartRange.yMin - delta.y;
+                    currentRange.yMax = dragStartRange.yMax - delta.y;
+                }
+                break;
+            case SDL_MOUSEWHEEL:
+                int mouseX, mouseY;
+                SDL_GetMouseState(&mouseX, &mouseY);
+                if (mouseX > panelX)
+                    itemList.handleScroll(e.wheel.y);
+                else
+                {
+                    const double zoomCenterX = currentRange.xMin + currentRange.xSpan()/2;
+                    const double zoomCenterY = currentRange.yMin + currentRange.ySpan()/2;
+                    const double zoomFactor = (e.wheel.y > 0) ? 0.9 : 1.1;
+                    currentRange.xMin = zoomCenterX + (currentRange.xMin - zoomCenterX) * zoomFactor;
+                    currentRange.xMax = zoomCenterX + (currentRange.xMax - zoomCenterX) * zoomFactor;
+                    currentRange.yMin = zoomCenterY + (currentRange.yMin - zoomCenterY) * zoomFactor;
+                    currentRange.yMax = zoomCenterY + (currentRange.yMax - zoomCenterY) * zoomFactor;
+                }
+                break;
+        }
+    }
+}
+
+void MathVisualizer::renderText(const std::string& text, int x, int y, int maxWidth)
+{
+    SDL_Surface* surface = TTF_RenderUTF8_Blended(font, text.c_str(), Constants::TEXT_COLOR);
+    if (!surface)
+        return;
+    if (surface->w > maxWidth)
+    {
+        float scale = static_cast<float>(maxWidth) / surface->w;
+        SDL_Rect dstRect = {x, y, static_cast<int>(surface->w * scale), static_cast<int>(surface->h * scale)};
+        SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+        SDL_RenderCopy(renderer, texture, nullptr, &dstRect);
+        SDL_DestroyTexture(texture);
+    }
+    else
+    {
+        SDL_Rect dstRect = {x, y, surface->w, surface->h};
+        SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+        SDL_RenderCopy(renderer, texture, nullptr, &dstRect);
+        SDL_DestroyTexture(texture);
+    }
+    SDL_FreeSurface(surface);
+}
+
+void MathVisualizer::renderPanel()
+{
+    using namespace Constants;
+    SDL_Rect panelRect = {panelX, 0, PANEL_WIDTH, WINDOW_HEIGHT};
+    SDL_SetRenderDrawColor(renderer, PANEL_COLOR.r, PANEL_COLOR.g, PANEL_COLOR.b, 255);
+    SDL_RenderFillRect(renderer, &panelRect);
+
+    const SDL_Rect& addBtn = itemList.getAddButton();
+    const SDL_Rect& delBtn = itemList.getDelButton();
+    SDL_SetRenderDrawColor(renderer, BUTTON_COLOR.r, BUTTON_COLOR.g, BUTTON_COLOR.b, 255);
+    SDL_RenderFillRect(renderer, &addBtn);
+    SDL_RenderFillRect(renderer, &delBtn);
+    renderText("+ Add", addBtn.x + 10, addBtn.y + 3, addBtn.w - 20);
+    renderText("- Delete", delBtn.x + 10, delBtn.y + 3, delBtn.w - 20);
+
+    visibleItems = (WINDOW_HEIGHT - (BUTTON_HEIGHT * 2 + MARGIN * 3)) / TOTAL_HEIGHT;
+    const int startIdx = itemList.getScrollOffset();
+    const int endIdx = std::min(startIdx + visibleItems, static_cast<int>(itemList.getEquations().size()));
+
+    int yPos = MARGIN;
+    for (int i = startIdx; i < endIdx; ++i) 
+    {
+        SDL_Rect itemRect = 
+        {
+            panelX + MARGIN, 
+            yPos, 
+            PANEL_WIDTH - MARGIN * 2, 
+            ITEM_HEIGHT
+        };
+
+        if (i == itemList.getSelected()) 
+        {
+            SDL_SetRenderDrawColor(renderer, SELECT_COLOR.r, SELECT_COLOR.g, SELECT_COLOR.b, 255);
+            SDL_RenderFillRect(renderer, &itemRect);
+        }
+
+        const std::string& text = itemList.getEquations()[i].expression;
+
+        renderText(text, itemRect.x + 5, itemRect.y + 3, itemRect.w - 10);
+
+        if (itemList.isEditing() && i == itemList.getSelected()) 
+        {
+            const std::string& editingText = itemList.getEquations()[i].expression;
+            const int cursorPos = itemList.getCursorPos();
+
+            std::string beforeCursor = editingText.substr(0, cursorPos);
+            int textWidth = 0;
+            TTF_SizeText(font, beforeCursor.c_str(), &textWidth, nullptr);
+
+            if (SDL_GetTicks() - cursorBlink < 500) 
+            {
+                SDL_SetRenderDrawColor(renderer, EDIT_COLOR.r, EDIT_COLOR.g, EDIT_COLOR.b, 255);
+                SDL_RenderDrawLine(renderer, 
+                    itemRect.x + 5 + textWidth,  
+                    itemRect.y + 2,             
+                    itemRect.x + 5 + textWidth,  
+                    itemRect.y + ITEM_HEIGHT - 4 
+                );
+            }
+        }
+
+        SDL_SetRenderDrawColor(renderer, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, GRID_COLOR.a);
+        SDL_Rect lineRect
+        {
+            panelX + MARGIN, 
+            yPos + ITEM_HEIGHT, 
+            PANEL_WIDTH - MARGIN * 2, 
+            LINE_HEIGHT
+        };
+        SDL_RenderFillRect(renderer, &lineRect);
+
+        yPos += TOTAL_HEIGHT;
+    }
+
+    if (SDL_GetTicks() - cursorBlink > 1000) 
+        cursorBlink = SDL_GetTicks();
+}
+
+void MathVisualizer::render()
+{
+    using namespace Constants;
+    SDL_SetRenderDrawColor(renderer, BACKGROUND_COLOR.r, BACKGROUND_COLOR.g, BACKGROUND_COLOR.b, 255);
+    SDL_RenderClear(renderer);
+
+    SDL_Rect graphArea{0, 0, 1200, WINDOW_HEIGHT};
+    SDL_RenderSetClipRect(renderer, &graphArea);
+    drawCoordinateGrid(renderer, font, currentRange);
+    SDL_RenderSetClipRect(renderer, nullptr);
+
+    renderPanel();
+    SDL_RenderPresent(renderer);
+}
+
+void MathVisualizer::run()
+{
+    const Uint32 targetDelay = 1000 / 60;
+    Uint32 frameStart, frameTime;
+    
+    while (isRunning)
+    {
+        frameStart = SDL_GetTicks();
+        handleEvents();
+        render();
+        
+        frameTime = SDL_GetTicks() - frameStart;
+        if (frameTime < targetDelay)
+            SDL_Delay(targetDelay - frameTime);
+    }
+}
+
+void MathVisualizer::cleanup()
+{
+    TTF_CloseFont(font);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    TTF_Quit();
+    SDL_Quit();
+}
+
+void MathVisualizer::handlePanelClick(const SDL_MouseButtonEvent& e)
+{
+    SDL_Point mouse{e.x, e.y};
+    const SDL_Rect& addBtn = itemList.getAddButton();
+    const SDL_Rect& delBtn = itemList.getDelButton();
+
+    if (SDL_PointInRect(&mouse, &addBtn))
+    {
+        itemList.add(std::string());
+        itemList.select(itemList.getEquations().size() - 1);
+    }
+    else if (SDL_PointInRect(&mouse, &delBtn))
+    {
+        itemList.removeSelected();
+    }
+    else
+    {
+        const int listStartY = Constants::MARGIN;
+        const int listEndY = Constants::MARGIN + visibleItems * Constants::TOTAL_HEIGHT;
+        if (mouse.y >= listStartY && mouse.y < listEndY)
+        {
+            int itemIndex = itemList.getScrollOffset() + (mouse.y - listStartY) / Constants::TOTAL_HEIGHT;
+            itemList.select(itemIndex < itemList.getEquations().size() ? itemIndex : -1);
+        }
+        else
+        {
+            itemList.select(-1);
+        }
+    }
+}
+------------------MathVisualizer.hpp------------------
+#pragma once
+#include "ItemList.hpp"
+#include "MathUtils.hpp"
+#include "RenderUtils.hpp"
+
+class MathVisualizer
+{
+private:
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    TTF_Font* font = nullptr;
+    MathRange currentRange{-15.0, 15.0, -10.0, 10.0};
+    ItemList itemList;
+    bool isRunning = true;
+    bool isDragging = false;
+    Point2D dragStart{0.0, 0.0};
+    MathRange dragStartRange{-15.0, 15.0, -10.0, 10.0};
+    int panelX = 1200;
+    Uint32 cursorBlink = 0;
+    int visibleItems = 0;
+
+    void renderText(const std::string& text, int x, int y, int maxWidth);
+    void renderPanel();
+    void handlePanelClick(const SDL_MouseButtonEvent& e);
+
+public:
+    MathVisualizer() = default;
+    bool init();
+    void handleEvents();
+    void render();
+    void run();
+    void cleanup();
+};
+------------------RenderUtils.cpp------------------
+#include "RenderUtils.hpp"
+
+void drawCoordinateGrid(SDL_Renderer* renderer, TTF_Font* font, const MathRange& range)
+{
+    using namespace Constants;
+    const double baseGridSize = std::pow(10.0, std::floor(std::log10(range.xSpan())));
+    const double gridSize = baseGridSize / 2.0;
+    const int precision = std::max(0, 3 - static_cast<int>(std::log10(gridSize)));
+
+    SDL_SetRenderDrawColor(renderer, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, GRID_COLOR.a);
+    for (double x = std::ceil(range.xMin / gridSize) * gridSize; x <= range.xMax; x += gridSize)
+    {
+        if (std::abs(x) < 1e-10)
+            continue;
+        Point2D p1 = mathToScreen({x, range.yMin}, range);
+        Point2D p2 = mathToScreen({x, range.yMax}, range);
+        SDL_RenderDrawLine(renderer, round(p1.x), round(p1.y), round(p2.x), round(p2.y));
+    }
+
+    for (double y = std::ceil(range.yMin / gridSize) * gridSize; y <= range.yMax; y += gridSize)
+    {
+        if (std::abs(y) < 1e-10)
+            continue;
+        Point2D p1 = mathToScreen({range.xMin, y}, range);
+        Point2D p2 = mathToScreen({range.xMax, y}, range);
+        SDL_RenderDrawLine(renderer, round(p1.x), round(p1.y), round(p2.x), round(p2.y));
+    }
+
+    SDL_SetRenderDrawColor(renderer, AXIS_COLOR.r, AXIS_COLOR.g, AXIS_COLOR.b, AXIS_COLOR.a);
+    Point2D xStart = mathToScreen({range.xMin, 0}, range);
+    Point2D xEnd = mathToScreen({range.xMax, 0}, range);
+    Point2D yStart = mathToScreen({0, range.yMin}, range);
+    Point2D yEnd = mathToScreen({0, range.yMax}, range);
+    SDL_RenderDrawLine(renderer, xStart.x, xStart.y, xEnd.x, xEnd.y);
+    SDL_RenderDrawLine(renderer, yStart.x, yStart.y, yEnd.x, yEnd.y);
+
+    SDL_Color textColor = TEXT_COLOR;
+    for (double x = std::ceil(range.xMin / gridSize) * gridSize; x <= range.xMax; x += gridSize)
+    {
+        if (std::abs(x) < 1e-10)
+            continue;
+        Point2D p = mathToScreen({x, 0}, range);
+        std::string label = formatNumber(x, precision);
+        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), textColor);
+        if (!surface)
+            continue;
+        SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+        SDL_Rect rect = {static_cast<int>(p.x) - surface->w/2, static_cast<int>(p.y) + 5, surface->w, surface->h};
+        SDL_RenderCopy(renderer, texture, nullptr, &rect);
+        SDL_FreeSurface(surface);
+        SDL_DestroyTexture(texture);
+    }
+
+    for (double y = std::ceil(range.yMin / gridSize) * gridSize; y <= range.yMax; y += gridSize)
+    {
+        if (std::abs(y) < 1e-10)
+            continue;
+        Point2D p = mathToScreen({0, y}, range);
+        std::string label = formatNumber(y, precision);
+        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), textColor);
+        if (!surface)
+            continue;
+        SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+        SDL_Rect rect = {static_cast<int>(p.x) - surface->w -5, static_cast<int>(p.y) - surface->h/2, surface->w, surface->h};
+        SDL_RenderCopy(renderer, texture, nullptr, &rect);
+        SDL_FreeSurface(surface);
+        SDL_DestroyTexture(texture);
+    }
+}
+------------------RenderUtils.hpp------------------
+#pragma once
+#include "MathUtils.hpp"
+#include <SDL_ttf.h>
+
+void drawCoordinateGrid(SDL_Renderer* renderer, TTF_Font* font, const MathRange& range);
+------------------eval.hpp------------------
+#ifndef EVAL_HPP
+#define EVAL_HPP
+
+#include <map>
+#include <string>
+#include <functional>
+#include <vector>
+#include <memory>
+#include <stdexcept>
+#include <limits>
+
+namespace eval
+{
+    constexpr size_t size_max = std::numeric_limits<size_t>::max();
+
+    template <typename CharType, typename DataType>
+    class sstree
+    {
+    public:
+        struct tree_in
+        {
+            std::map<CharType, tree_in> child;
+            DataType *data;
+            tree_in() : data(nullptr) {}
+            ~tree_in() { delete data; }
+        };
+        using iterator = tree_in *;
+
+    private:
+        tree_in tree;
+        iterator ptr;
+
+    public:
+        sstree() : ptr(&tree) {}
+
+        DataType *data() { return ptr->data; }
+        iterator begin() { return &tree; }
+        sstree &rebegin()
+        {
+            ptr = &tree;
+            return *this;
+        }
+        sstree &operator()(iterator it)
+        {
+            ptr = it;
+            return *this;
+        }
+        sstree &setptr(iterator it) { return operator()(it); }
+        iterator getptr() { return ptr; }
+        std::map<CharType, tree_in> &map() { return ptr->child; }
+
+        bool insert(const std::basic_string<CharType> &str, const DataType &data);
+
+        iterator find(const CharType &ch)
+        {
+            auto ptr_r = ptr->child.find(ch);
+            return ptr_r == ptr->child.end() ? nullptr : &(ptr_r->second);
+        }
+
+        iterator search(const std::basic_string<CharType> &str);
+
+        bool erase(const std::basic_string<CharType> &str);
+    };
+
+    template <typename CharType, typename DataType>
+    bool sstree<CharType,DataType>::insert(const std::basic_string<CharType> &str, const DataType &data)
+    {
+        iterator ptr_l = &tree;
+        typename std::map<CharType, tree_in>::iterator ptr_r;
+        for (size_t pos = 0; pos < str.size(); pos++)
+        {
+            ptr_r = ptr_l->child.find(str[pos]);
+            if (ptr_r != ptr_l->child.end())
+            {
+                ptr_l = &(ptr_r->second);
+            }
+            else
+            {
+                do
+                {
+                    ptr_l = &(ptr_l->child[str[pos]]);
+                } while (++pos < str.size());
+                break;
+            }
+        }
+        if (ptr_l->data)
+            return false;
+        ptr_l->data = new DataType(data);
+        return true;
+    }
+    template <typename CharType, typename DataType>
+    typename sstree<CharType,DataType>::iterator sstree<CharType,DataType>::search(const std::basic_string<CharType> &str)
+    {
+        typename std::map<CharType, tree_in>::iterator ptr_r;
+        iterator ptr_l = ptr;
+        for (const CharType &ch : str)
+        {
+            ptr_r = ptr_l->child.find(ch);
+            if (ptr_r == ptr_l->child.end())
+                return nullptr;
+            ptr_l = &(ptr_r->second);
+        }
+        return ptr_l;
+    }
+    template <typename CharType, typename DataType>
+    bool sstree<CharType,DataType>::erase(const std::basic_string<CharType> &str)
+    {
+        iterator ptr_l = &tree;
+        typename std::map<CharType, tree_in>::iterator ptr_r;
+        size_t last_branch = 0;
+        iterator last_node = &tree;
+        for (size_t pos = 0; pos < str.size(); ++pos)
+        {
+            ptr_r = ptr_l->child.find(str[pos]);
+            if (ptr_r == ptr_l->child.end())
+                return false;
+            if (ptr_l->child.size() > 1 || ptr_l->data)
+            {
+                last_node = ptr_l;
+                last_branch = pos;
+            }
+            ptr_l = &(ptr_r->second);
+        }
+        if (!ptr_l->child.empty())
+        {
+            delete ptr_l->data;
+            ptr_l->data = nullptr;
+        }
+        else
+        {
+            last_node->child.erase(str[last_branch]);
+        }
+        return true;
+    }
+    template <typename Type>
+    struct func
+    {
+        size_t size;
+        size_t priority;
+        std::function<Type(const Type *)> func_ptr;
+    };
+
+    enum class vartype
+    {
+        CONSTVAR,
+        FREEVAR
+    };
+
+    template <typename Type>
+    struct var
+    {
+        vartype vtype;
+        Type value;
+    };
+
+    template <typename Type>
+    struct epre
+    {
+        std::vector<func<Type> *> funcs;
+        std::vector<Type *> vars;
+        std::vector<Type> consts;
+        std::string index;
+        void clear()
+        {
+            funcs.clear();
+            vars.clear();
+            consts.clear();
+            index.clear();
+        }
+    };
+
+    template <typename CharType, typename DataType>
+    struct evaluator
+    {
+        using StringType = std::basic_string<CharType>;
+
+        std::function<bool(const StringType &,size_t&,epre<DataType> &)> consts;
+
+        std::shared_ptr<sstree<CharType, var<DataType>>> vars;
+        std::shared_ptr<sstree<CharType, func<DataType>>> funcs;
+        std::shared_ptr<sstree<CharType, func<DataType>>> prefix_ops;
+        std::shared_ptr<sstree<CharType, func<DataType>>> infix_ops;
+        std::shared_ptr<sstree<CharType, func<DataType>>> suffix_ops;
+
+        evaluator(
+            std::function<bool(const StringType &,size_t&,epre<DataType> &)> consts_,
+            std::shared_ptr<sstree<CharType, var<DataType>>> vars_ = nullptr,
+            std::shared_ptr<sstree<CharType, func<DataType>>> funcs_ = nullptr,
+            std::shared_ptr<sstree<CharType, func<DataType>>> pre_ops = nullptr,
+            std::shared_ptr<sstree<CharType, func<DataType>>> in_ops = nullptr,
+            std::shared_ptr<sstree<CharType, func<DataType>>> suf_ops = nullptr) : consts(consts_),
+                                                                                   vars(vars_ ? vars_ : std::make_shared<sstree<CharType, var<DataType>>>()),
+                                                                                   funcs(funcs_ ? funcs_ : std::make_shared<sstree<CharType, func<DataType>>>()),
+                                                                                   prefix_ops(pre_ops ? pre_ops : std::make_shared<sstree<CharType, func<DataType>>>()),
+                                                                                   infix_ops(in_ops ? in_ops : std::make_shared<sstree<CharType, func<DataType>>>()),
+                                                                                   suffix_ops(suf_ops ? suf_ops : std::make_shared<sstree<CharType, func<DataType>>>())
+        {}
+        epre<DataType> parse(const StringType &str);
+        size_t parse(epre<DataType> &expr, const StringType &str) noexcept;
+        DataType evaluate(const epre<DataType> &expr);
+    };
+    template <typename CharType, typename DataType>
+    size_t evaluator<CharType,DataType>::parse(epre<DataType> &expr, const StringType &str) noexcept
+    {
+        std::vector<func<DataType> *> op_stack;
+        size_t pos = 0;
+        bool expecting_operand = true;
+
+        while (pos < str.size())
+        {
+            if (isspace(str[pos]))
+            {
+                pos++;
+                continue;
+            }
+            if (expecting_operand)
+            {
+                if (str[pos] == '(')
+                {
+                    op_stack.push_back(nullptr);
+                    pos++;
+                    continue;
+                }
+                if(consts(str,pos,expr))
+                {
+                    expecting_operand = false;
+                    continue;
+                }
+                typename sstree<CharType, func<DataType>>::iterator it = prefix_ops->find(str[pos]);
+                if (it)
+                {
+                    size_t start = pos;
+                    prefix_ops->setptr(it);
+                    pos++;
+                    while (pos < str.size() && (it = prefix_ops->find(str[pos])))
+                    {
+                        prefix_ops->setptr(it);
+                        pos++;
+                    }
+
+                    if (prefix_ops->data())
+                    {
+                        op_stack.push_back(prefix_ops->data());
+                        prefix_ops->rebegin();
+                        continue;
+                    }
+                    prefix_ops->rebegin();
+                    pos = start; 
+                }
+                it = funcs->find(str[pos]);
+                if (it)
+                {
+                    size_t start = pos;
+                    funcs->setptr(it);
+                    pos++;
+                    while (pos < str.size() && (it = funcs->find(str[pos])))
+                    {
+                        funcs->setptr(it);
+                        pos++;
+                    }
+
+                    if (pos < str.size() && str[pos] == '(' && funcs->data())
+                    {
+                        op_stack.push_back(funcs->data());
+                        op_stack.push_back(nullptr); 
+                        pos++;                       
+                        expecting_operand = true;
+                        funcs->rebegin();
+                        continue;
+                    }
+                    funcs->rebegin();
+                    pos = start; 
+                }
+                typename sstree<CharType, var<DataType>>::iterator var_it = vars->find(str[pos]);
+                if (var_it)
+                {
+                    size_t start = pos;
+                    vars->setptr(var_it);
+                    pos++;
+                    while (pos < str.size() && (var_it = vars->find(str[pos])))
+                    {
+                        vars->setptr(var_it);
+                        pos++;
+                    }
+
+                    if (vars->data())
+                    {
+                        expr.vars.push_back(&vars->data()->value);
+                        expr.index += 'v';
+                        expecting_operand = false;
+                        vars->rebegin();
+                        continue;
+                    }
+                    vars->rebegin();
+                    pos = start; 
+                }
+            }
+            if (!expecting_operand)
+            {
+                if (str[pos] == ')')
+                {
+                    while (!op_stack.empty() && op_stack.back() != nullptr)
+                    {
+                        expr.funcs.push_back(op_stack.back());
+                        expr.index += 'f';
+                        op_stack.pop_back();
+                    }
+                    if (op_stack.empty())
+                        return pos;
+                    op_stack.pop_back();
+                    pos++;
+                    continue;
+                }
+                if (str[pos] == ',')
+                {
+                    pos++;
+                    expecting_operand = true;
+                    continue;
+                }
+                typename sstree<CharType, func<DataType>>::iterator op_it = infix_ops->find(str[pos]);
+                if (op_it)
+                {
+                    size_t start = pos;
+                    infix_ops->setptr(op_it);
+                    pos++;
+                    while (pos < str.size() && (op_it = infix_ops->find(str[pos])))
+                    {
+                        infix_ops->setptr(op_it);
+                        pos++;
+                    }
+
+                    if (infix_ops->data())
+                    {
+                        
+                        while (!op_stack.empty() && op_stack.back() != nullptr &&
+                               op_stack.back()->priority >= infix_ops->data()->priority)
+                        {
+                            expr.funcs.push_back(op_stack.back());
+                            expr.index += 'f';
+                            op_stack.pop_back();
+                        }
+                        op_stack.push_back(infix_ops->data());
+                        expecting_operand = true;
+                        infix_ops->rebegin();
+                        continue;
+                    }
+                    infix_ops->rebegin();
+                    pos = start; 
+                }
+                op_it = suffix_ops->find(str[pos]);
+                if (op_it)
+                {
+                    size_t start = pos;
+                    suffix_ops->setptr(op_it);
+                    pos++;
+                    while (pos < str.size() && (op_it = suffix_ops->find(str[pos])))
+                    {
+                        suffix_ops->setptr(op_it);
+                        pos++;
+                    }
+
+                    if (suffix_ops->data())
+                    {
+                        
+                        expr.funcs.push_back(suffix_ops->data());
+                        expr.index += 'f';
+                        suffix_ops->rebegin();
+                        continue;
+                    }
+                    suffix_ops->rebegin();
+                    pos = start; 
+                }
+            }
+            return pos;
+        }
+
+        while (!op_stack.empty())
+        {
+            if (op_stack.back() == nullptr)
+            {
+                return str.size(); 
+            }
+            expr.funcs.push_back(op_stack.back());
+            expr.index += 'f';
+            op_stack.pop_back();
+        }
+
+        return size_max; 
+    }
+    template <typename CharType, typename DataType>
+    epre<DataType> evaluator<CharType,DataType>::parse(const StringType &str)
+    {
+        epre<DataType> expr;
+        std::vector<func<DataType> *> op_stack;
+        size_t pos = 0;
+        bool expecting_operand = true;
+
+        while (pos < str.size())
+        {
+            if (isspace(str[pos]))
+            {
+                pos++;
+                continue;
+            }
+            if (expecting_operand)
+            {
+                if (str[pos] == '(')
+                {
+                    op_stack.push_back(nullptr);
+                    pos++;
+                    continue;
+                }
+                if(consts(str,pos,expr))
+                {
+                    expecting_operand = false;
+                    continue;
+                }
+                typename sstree<CharType, func<DataType>>::iterator it = prefix_ops->find(str[pos]);
+                if (it)
+                {
+                    size_t start = pos;
+                    prefix_ops->setptr(it);
+                    pos++;
+                    while (pos < str.size() && (it = prefix_ops->find(str[pos])))
+                    {
+                        prefix_ops->setptr(it);
+                        pos++;
+                    }
+
+                    if (prefix_ops->data())
+                    {
+                        op_stack.push_back(prefix_ops->data());
+                        prefix_ops->rebegin();
+                        continue;
+                    }
+                    prefix_ops->rebegin();
+                    pos = start; 
+                }
+                it = funcs->find(str[pos]);
+                if (it)
+                {
+                    size_t start = pos;
+                    funcs->setptr(it);
+                    pos++;
+                    while (pos < str.size() && (it = funcs->find(str[pos])))
+                    {
+                        funcs->setptr(it);
+                        pos++;
+                    }
+
+                    if (pos < str.size() && str[pos] == '(' && funcs->data())
+                    {
+                        op_stack.push_back(funcs->data());
+                        op_stack.push_back(nullptr); 
+                        pos++;                       
+                        expecting_operand = true;
+                        funcs->rebegin();
+                        continue;
+                    }
+                    funcs->rebegin();
+                    pos = start; 
+                }
+                typename sstree<CharType, var<DataType>>::iterator var_it = vars->find(str[pos]);
+                if (var_it)
+                {
+                    size_t start = pos;
+                    vars->setptr(var_it);
+                    pos++;
+                    while (pos < str.size() && (var_it = vars->find(str[pos])))
+                    {
+                        vars->setptr(var_it);
+                        pos++;
+                    }
+
+                    if (vars->data())
+                    {
+                        expr.vars.push_back(&vars->data()->value);
+                        expr.index += 'v';
+                        expecting_operand = false;
+                        vars->rebegin();
+                        continue;
+                    }
+                    vars->rebegin();
+                    pos = start; 
+                }
+            }
+            if (!expecting_operand)
+            {
+                if (str[pos] == ')')
+                {
+                    while (!op_stack.empty() && op_stack.back() != nullptr)
+                    {
+                        expr.funcs.push_back(op_stack.back());
+                        expr.index += 'f';
+                        op_stack.pop_back();
+                    }
+                    if (op_stack.empty())
+                        throw pos;
+                    op_stack.pop_back();
+                    pos++;
+                    continue;
+                }
+                if (str[pos] == ',')
+                {
+                    pos++;
+                    expecting_operand = true;
+                    continue;
+                }
+                typename sstree<CharType, func<DataType>>::iterator op_it = infix_ops->find(str[pos]);
+                if (op_it)
+                {
+                    size_t start = pos;
+                    infix_ops->setptr(op_it);
+                    pos++;
+                    while (pos < str.size() && (op_it = infix_ops->find(str[pos])))
+                    {
+                        infix_ops->setptr(op_it);
+                        pos++;
+                    }
+
+                    if (infix_ops->data())
+                    {
+                        
+                        while (!op_stack.empty() && op_stack.back() != nullptr &&
+                               op_stack.back()->priority >= infix_ops->data()->priority)
+                        {
+                            expr.funcs.push_back(op_stack.back());
+                            expr.index += 'f';
+                            op_stack.pop_back();
+                        }
+                        op_stack.push_back(infix_ops->data());
+                        expecting_operand = true;
+                        infix_ops->rebegin();
+                        continue;
+                    }
+                    infix_ops->rebegin();
+                    pos = start; 
+                }
+                op_it = suffix_ops->find(str[pos]);
+                if (op_it)
+                {
+                    size_t start = pos;
+                    suffix_ops->setptr(op_it);
+                    pos++;
+                    while (pos < str.size() && (op_it = suffix_ops->find(str[pos])))
+                    {
+                        suffix_ops->setptr(op_it);
+                        pos++;
+                    }
+
+                    if (suffix_ops->data())
+                    {
+                        
+                        expr.funcs.push_back(suffix_ops->data());
+                        expr.index += 'f';
+                        suffix_ops->rebegin();
+                        continue;
+                    }
+                    suffix_ops->rebegin();
+                    pos = start; 
+                }
+            }
+            throw pos;
+        }
+
+        while (!op_stack.empty())
+        {
+            if (op_stack.back() == nullptr)
+            {
+                throw str.size(); 
+            }
+            expr.funcs.push_back(op_stack.back());
+            expr.index += 'f';
+            op_stack.pop_back();
+        }
+
+        return expr; 
+    }
+    template <typename CharType, typename DataType>
+    DataType evaluator<CharType,DataType>::evaluate(const epre<DataType> &expr)
+    {
+        std::vector<DataType> stack;
+        size_t func_idx = 0, var_idx = 0, const_idx = 0;
+
+        for (char ch : expr.index)
+        {
+            switch (ch)
+            {
+            case 'f':
+            {
+                auto &f = expr.funcs[func_idx++];
+                if (stack.size() < f->size)
+                    throw std::runtime_error("Stack underflow");
+                std::vector<DataType> args(f->size);
+                for (size_t i = 0; i < f->size; ++i)
+                    args[i] = stack[stack.size() - f->size + i];
+                stack.resize(stack.size() - f->size);
+                stack.push_back(f->func_ptr(args.data()));
+                break;
+            }
+            case 'v':
+                stack.push_back(*expr.vars[var_idx++]);
+                break;
+            case 'c':
+                stack.push_back(expr.consts[const_idx++]);
+                break;
+            default:
+                throw std::runtime_error("Invalid expression index");
+            }
+        }
+        if (stack.size() != 1)
+            throw std::runtime_error("Malformed expression");
+        return stack.back();
+    }
+}
+
+#endif
+------------------eval_init.hpp------------------
+#ifndef EVAL_INIT_HPP
+#define EVAL_INIT_HPP
+#include "eval.hpp"
+#include<cmath>
+
+namespace eval_init
+{
+    template<typename T>
+    T convert(const std::string&);
+    template<>
+    inline double convert<double>(const std::string&str)
+    {
+        return std::stod(str);
+    }
+    template<>
+    inline float convert<float>(const std::string&str)
+    {
+        return std::stof(str);
+    }
+    template<>
+    inline long double convert<long double>(const std::string&str)
+    {
+        return std::stold(str);
+    }
+
+    template<typename T>
+    eval::evaluator<char, T> create_real_eval()
+    {
+        using namespace eval;
+        evaluator<char, T> calc(
+            [](const std::string &str,size_t& pos,epre<T> &expr) -> bool
+            {
+                if(str[pos]<'0'||str[pos]>'9')
+                    return false;
+                size_t start = pos;
+                while (pos < str.size() && str[pos]>='0'&&str[pos]<='9')
+                    pos++;
+                if(str[pos]=='.'&&str[pos+1]>='0'&&str[pos+1]<='9')
+                    while (pos < str.size() && str[pos]>='0'&&str[pos]<='9')
+                        pos++;
+                expr.consts.push_back(convert<T>(str.substr(start, pos - start)));
+                expr.index += 'c';
+                return true;
+            }
+        );
+
+        // 注册基本运算符
+        func<T> add_op{2, 1, [](const T *args)
+                            { return args[0] + args[1]; }};
+        func<T> sub_op{2, 1, [](const T *args)
+                            { return args[0] - args[1]; }};
+        func<T> mul_op{2, 2, [](const T *args)
+                            { return args[0] * args[1]; }};
+        func<T> div_op{2, 2, [](const T *args)
+                            { return args[0] / args[1]; }};
+        func<T> pow_op{2, 3, [](const T *args)
+                            { return std::pow(args[0], args[1]); }};
+        func<T> mod_op{2, 2, [](const T *args)
+                            { return std::fmod(args[0], args[1]); }};
+        func<T> neg_op{1, 2, [](const T *args)
+                            { return -args[0]; }};
+        func<T> aff_op{1, 2, [](const T *args)
+                       { return args[0]; }};
+
+        calc.infix_ops->insert("+", add_op);
+        calc.infix_ops->insert("-", sub_op);
+        calc.infix_ops->insert("*", mul_op);
+        calc.infix_ops->insert("/", div_op);
+        calc.infix_ops->insert("^", pow_op);
+        calc.infix_ops->insert("%", mod_op);
+        calc.prefix_ops->insert("-", neg_op);
+        calc.prefix_ops->insert("+", aff_op);
+
+        // 注册数学函数
+        func<T> sin_op{1, size_max, [](const T *args)
+                            { return std::sin(args[0]); }};
+        func<T> cos_op{1, size_max, [](const T *args)
+                            { return std::cos(args[0]); }};
+        func<T> tan_op{1, size_max, [](const T *args)
+                            { return std::tan(args[0]); }};
+        func<T> asin_op{1, size_max, [](const T *args)
+                             { return std::asin(args[0]); }};
+        func<T> acos_op{1, size_max, [](const T *args)
+                             { return std::acos(args[0]); }};
+        func<T> atan_op{1, size_max, [](const T *args)
+                             { return std::atan(args[0]); }};
+        func<T> sinh_op{1, size_max, [](const T *args)
+                             { return std::sinh(args[0]); }};
+        func<T> cosh_op{1, size_max, [](const T *args)
+                             { return std::cosh(args[0]); }};
+        func<T> tanh_op{1, size_max, [](const T *args)
+                             { return std::tanh(args[0]); }};
+        func<T> log_op{2, size_max, [](const T *args)
+                            { return std::log(args[1]) / log(args[0]); }};
+        func<T> lg_op{1, size_max, [](const T *args)
+                           { return std::log10(args[0]); }};
+        func<T> ln_op{1, size_max, [](const T *args)
+                           { return std::log(args[0]); }};
+        func<T> log2_op{1, size_max, [](const T *args)
+                             { return std::log2(args[0]); }};
+        func<T> sqrt_op{1, size_max, [](const T *args)
+                        { return std::sqrt(args[0]); }};
+
+        calc.funcs->insert("sin", sin_op);
+        calc.funcs->insert("cos", cos_op);
+        calc.funcs->insert("tan", tan_op);
+        calc.funcs->insert("asin", asin_op);
+        calc.funcs->insert("acos", acos_op);
+        calc.funcs->insert("atan", atan_op);
+        calc.funcs->insert("sinh", sinh_op);
+        calc.funcs->insert("cosh", cosh_op);
+        calc.funcs->insert("tanh", tanh_op);
+        calc.funcs->insert("log", log_op);
+        calc.funcs->insert("lg", lg_op);
+        calc.funcs->insert("ln", ln_op);
+        calc.funcs->insert("log2", log2_op);
+        calc.funcs->insert("sqrt", sqrt_op);
+
+        // 注册数学常量
+        var<T> pi{vartype::CONSTVAR,std::acos(T(-1))};
+        var<T> e{vartype::CONSTVAR,std::exp(T(1))};
+
+        calc.vars->insert("pi",pi);
+        calc.vars->insert("e",e);
+
+        return calc;
+    }
+}
+#endif
+------------------main.cpp------------------
+#include "MathVisualizer.hpp"
+
+#undef main
+
+int main(int argc, char* argv[])
+{
+    MathVisualizer app;
+    if (!app.init())
+        return -1;
+    app.run();
+    app.cleanup();
+    return 0;
+}
+------------------------------------
