@@ -2,6 +2,7 @@
 #include "Equation.hpp"
 #include "Constants.hpp"
 #include <vector>
+#include <iterator>
 
 class ItemList
 {
@@ -16,12 +17,13 @@ private:
 public:
     ItemList() = default;
     void updateButtonPositions(int panelX);
-    void add(const std::string& item);
+    int add(const std::string& item);
     void removeSelected();
     void endEdit();
-    void handleInput(const SDL_Event& e);
+    void handleInput(const SDL_Event& e, SDL_Renderer* renderer);
     void select(int index);
     void handleScroll(int delta);
+    void selectColor(SDL_Renderer* renderer);
     
     std::vector<Equation>& getEquations() { return equations; }
     int getSelected() const { return selected; }

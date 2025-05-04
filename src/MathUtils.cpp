@@ -21,19 +21,16 @@ std::string formatNumber(double value, int precision)
         return "NaN";
     std::ostringstream oss;
     const double absValue = std::abs(value);
-    if ((absValue >= 1e4 || (absValue > 0 && absValue <= 1e-4)) && absValue != 0.0)
-    {
+    const bool isscientific = (absValue >= 1e4 || (absValue > 0 && absValue <= 1e-4)) && absValue != 0.0;
+    if (isscientific)
         oss << std::scientific << std::setprecision(std::max(1, precision - 1));
-    }
     else
-    {
         oss << std::fixed << std::setprecision(precision);
-    }
     oss << value;
     std::string s = oss.str();
     
     size_t dot_pos = s.find('.');
-    if (dot_pos != std::string::npos)
+    if (!isscientific&&dot_pos != std::string::npos)
     {
         s = s.substr(0, s.find_last_not_of('0', s.size() - 1) + 1);
         if (s.back() == '.')

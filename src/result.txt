@@ -72,11 +72,17 @@ void ItemList::updateButtonPositions(int panelX)
     };
 }
 
-void ItemList::add(const std::string& item)
+int ItemList::add(const std::string& item)
 {
     Equation eq;
     eq.expression = item;
-    equations.push_back(std::move(eq));
+    if (selected == -1)
+    {
+        equations.push_back(std::move(eq));
+        return equations.size()-1;
+    }
+    equations.insert(equations.begin() + selected + 1u, std::move(eq));
+    return selected+1;
 }
 
 void ItemList::removeSelected()
@@ -84,7 +90,7 @@ void ItemList::removeSelected()
     if (selected >= 0 && selected < static_cast<int>(equations.size()))
     {
         equations.erase(equations.begin() + selected);
-        selected = -1;
+        selected--;
         cursorPos = 0;
     }
 }
@@ -97,6 +103,9 @@ void ItemList::endEdit()
     Equation& eq = equations[selected];
     eq.value.clear();
     eq.type = RelationalOperator::INVALID;
+
+    selected = -1;
+    cursorPos = 0;
 
     if (eq.expression.empty())
         return;
@@ -154,15 +163,22 @@ void ItemList::endEdit()
         eq.value.clear();
         eq.type = RelationalOperator::INVALID;
     }
-
-    selected = -1;
-    cursorPos = 0;
 }
 
 void ItemList::handleInput(const SDL_Event& e)
 {
-    if (selected == -1)
+    if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_INSERT)
+    {
+        select(add(std::string()));
         return;
+    }
+
+    if (selected == -1)
+    {
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RETURN)
+            select(0);
+        return;
+    }
 
     Equation& eq = equations[selected];
     if (e.type == SDL_TEXTINPUT)
@@ -179,25 +195,54 @@ void ItemList::handleInput(const SDL_Event& e)
                 break;
             case SDLK_LEFT:
                 if (cursorPos > 0)
-                    cursorPos--;
+                {
+                    size_t size = eq.expression[cursorPos - 1u] < 0 ? 3u : 1u;
+                    cursorPos-=size;
+                }
                 break;
             case SDLK_RIGHT:
                 if (cursorPos < static_cast<int>(eq.expression.size()))
-                    cursorPos++;
+                {
+                    size_t size = eq.expression[cursorPos - 1u] < 0 ? 3u : 1u;
+                    cursorPos+=size;
+                }
+                break;
+            case SDLK_UP:
+                if (selected > 0)
+                    select(selected - 1);
+                break;
+            case SDLK_DOWN:
+                if (selected < equations.size()-1)
+                    select(selected + 1);
                 break;
             case SDLK_BACKSPACE:
                 if (cursorPos > 0)
                 {
-                    eq.expression.erase(cursorPos - 1u);
-                    cursorPos--;
+                    size_t size = eq.expression[cursorPos - 1u] < 0 ? 3u : 1u;
+                    eq.expression.erase(cursorPos - size,size);
+                    cursorPos-=size;
                 }
                 break;
             case SDLK_DELETE:
-                if (cursorPos < static_cast<int>(eq.expression.size()))
-                    eq.expression.erase(cursorPos, 1);
+                removeSelected();
+                break;
+            case SDLK_HOME:
+                cursorPos = 0;
+                break;
+            case SDLK_END:
+                cursorPos = eq.expression.size();
+                break;
+            case SDLK_q:
+                if(e.key.keysym.mod & KMOD_CTRL)
+                    selectColor();
                 break;
         }
     }
+}
+
+void ItemList::selectColor()
+{
+
 }
 
 void ItemList::select(int index)
@@ -215,7 +260,7 @@ void ItemList::select(int index)
 void ItemList::handleScroll(int delta)
 {
     using namespace Constants;
-    int visibleItems = (WINDOW_HEIGHT - (BUTTON_HEIGHT * 2 + MARGIN * 3)) / TOTAL_HEIGHT;
+    int visibleItems = (WINDOW_HEIGHT - (BUTTON_HEIGHT << 1 + MARGIN * 3)) / TOTAL_HEIGHT;
     scrollOffset = std::max(0, std::min(scrollOffset - delta, static_cast<int>(equations.size()) - visibleItems));
 }
 ------------------ItemList.hpp------------------
@@ -237,12 +282,13 @@ private:
 public:
     ItemList() = default;
     void updateButtonPositions(int panelX);
-    void add(const std::string& item);
+    int add(const std::string& item);
     void removeSelected();
     void endEdit();
     void handleInput(const SDL_Event& e);
     void select(int index);
     void handleScroll(int delta);
+    void selectColor();
     
     std::vector<Equation>& getEquations() { return equations; }
     int getSelected() const { return selected; }
@@ -276,19 +322,16 @@ std::string formatNumber(double value, int precision)
         return "NaN";
     std::ostringstream oss;
     const double absValue = std::abs(value);
-    if ((absValue >= 1e4 || (absValue > 0 && absValue <= 1e-4)) && absValue != 0.0)
-    {
+    const bool isscientific = (absValue >= 1e4 || (absValue > 0 && absValue <= 1e-4)) && absValue != 0.0;
+    if (isscientific)
         oss << std::scientific << std::setprecision(std::max(1, precision - 1));
-    }
     else
-    {
         oss << std::fixed << std::setprecision(precision);
-    }
     oss << value;
     std::string s = oss.str();
     
     size_t dot_pos = s.find('.');
-    if (dot_pos != std::string::npos)
+    if (!isscientific&&dot_pos != std::string::npos)
     {
         s = s.substr(0, s.find_last_not_of('0', s.size() - 1) + 1);
         if (s.back() == '.')
@@ -457,7 +500,7 @@ void MathVisualizer::renderText(const std::string& text, int x, int y, int maxWi
 void MathVisualizer::renderPanel()
 {
     using namespace Constants;
-    SDL_Rect panelRect = {panelX, 0, PANEL_WIDTH, WINDOW_HEIGHT};
+    SDL_Rect panelRect = { panelX, 0, PANEL_WIDTH, WINDOW_HEIGHT };
     SDL_SetRenderDrawColor(renderer, PANEL_COLOR.r, PANEL_COLOR.g, PANEL_COLOR.b, 255);
     SDL_RenderFillRect(renderer, &panelRect);
 
@@ -473,54 +516,125 @@ void MathVisualizer::renderPanel()
     const int startIdx = itemList.getScrollOffset();
     const int endIdx = std::min(startIdx + visibleItems, static_cast<int>(itemList.getEquations().size()));
 
-    int yPos = MARGIN;
-    for (int i = startIdx; i < endIdx; ++i) 
+    SDL_Rect listClipRect
     {
-        SDL_Rect itemRect = 
-        {
-            panelX + MARGIN, 
-            yPos, 
-            PANEL_WIDTH - MARGIN * 2, 
+        panelX + MARGIN,
+        MARGIN,
+        PANEL_WIDTH - MARGIN * 2,
+        visibleItems * TOTAL_HEIGHT
+    };
+    SDL_RenderSetClipRect(renderer, &listClipRect);
+
+    int yPos = MARGIN;
+    for (int i = startIdx; i < endIdx; ++i)
+    {
+        const bool isSelected = (i == itemList.getSelected());
+        const Equation& eq = itemList.getEquations()[i];
+
+        SDL_Rect itemRect = {
+            panelX + MARGIN,
+            yPos,
+            PANEL_WIDTH - MARGIN * 2,
             ITEM_HEIGHT
         };
 
-        if (i == itemList.getSelected()) 
-        {
+        if (isSelected) {
             SDL_SetRenderDrawColor(renderer, SELECT_COLOR.r, SELECT_COLOR.g, SELECT_COLOR.b, 255);
             SDL_RenderFillRect(renderer, &itemRect);
         }
-
-        const std::string& text = itemList.getEquations()[i].expression;
-
-        renderText(text, itemRect.x + 5, itemRect.y + 3, itemRect.w - 10);
-
-        if (itemList.isEditing() && i == itemList.getSelected()) 
+        const int maxTextWidth = itemRect.w - 10;
+        SDL_Rect textRect
         {
-            const std::string& editingText = itemList.getEquations()[i].expression;
+            itemRect.x + 5,
+            itemRect.y + 3,
+            maxTextWidth,
+            ITEM_HEIGHT - 6
+        };
+
+        if (itemList.isEditing() && isSelected)
+        {
+            const std::string& text = eq.expression;
             const int cursorPos = itemList.getCursorPos();
 
-            std::string beforeCursor = editingText.substr(0, cursorPos);
-            int textWidth = 0;
-            TTF_SizeText(font, beforeCursor.c_str(), &textWidth, nullptr);
+            int fullTextWidth = 0;
+            TTF_SizeUTF8(font, text.c_str(), &fullTextWidth, nullptr);
 
-            if (SDL_GetTicks() - cursorBlink < 500) 
+            std::string beforeCursor = text.substr(0, cursorPos);
+            int cursorPixelPos = 0;
+            TTF_SizeUTF8(font, beforeCursor.c_str(), &cursorPixelPos, nullptr);
+
+            int renderOffset = 0;
+            if (fullTextWidth > maxTextWidth)
             {
-                SDL_SetRenderDrawColor(renderer, EDIT_COLOR.r, EDIT_COLOR.g, EDIT_COLOR.b, 255);
-                SDL_RenderDrawLine(renderer, 
-                    itemRect.x + 5 + textWidth,  
-                    itemRect.y + 2,             
-                    itemRect.x + 5 + textWidth,  
-                    itemRect.y + ITEM_HEIGHT - 4 
-                );
+                const int halfWidth = maxTextWidth / 2;
+                renderOffset = cursorPixelPos - halfWidth;
+                renderOffset = std::max(0, renderOffset);
+                renderOffset = std::min(renderOffset, fullTextWidth - maxTextWidth);
+            }
+
+            SDL_Surface* surface = TTF_RenderUTF8_Blended(font, text.c_str(), TEXT_COLOR);
+            if (surface)
+            {
+                SDL_Rect srcRect
+                {
+                    renderOffset, 0,
+                    std::min(maxTextWidth, surface->w - renderOffset),
+                    surface->h
+                };
+
+                SDL_Rect dstRect
+                {
+                    textRect.x,
+                    textRect.y,
+                    srcRect.w,
+                    surface->h
+                };
+
+                SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+                SDL_RenderCopy(renderer, texture, &srcRect, &dstRect);
+                SDL_DestroyTexture(texture);
+                SDL_FreeSurface(surface);
+
+                if (SDL_GetTicks() - cursorBlink < 500)
+                {
+                    int visualCursorX = textRect.x + (cursorPixelPos - renderOffset);
+                    visualCursorX = std::max(textRect.x, std::min(visualCursorX, textRect.x + maxTextWidth - 2));
+
+                    SDL_SetRenderDrawColor(renderer, EDIT_COLOR.r, EDIT_COLOR.g, EDIT_COLOR.b, 255);
+                    SDL_RenderDrawLine(renderer,
+                        visualCursorX, textRect.y + 2,
+                        visualCursorX, textRect.y + textRect.h - 4
+                    );
+                }
+            }
+        }
+        else
+        {
+            SDL_Surface* surface = TTF_RenderUTF8_Blended(font, eq.expression.c_str(), TEXT_COLOR);
+            if (surface)
+            {
+                SDL_Rect srcRect = { 0, 0, std::min(surface->w, maxTextWidth), surface->h };
+
+                SDL_Rect dstRect = {
+                    textRect.x,
+                    textRect.y + (textRect.h - surface->h) / 2,
+                    srcRect.w,
+                    surface->h
+                };
+
+                SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+                SDL_RenderCopy(renderer, texture, &srcRect, &dstRect);
+                SDL_DestroyTexture(texture);
+                SDL_FreeSurface(surface);
             }
         }
 
         SDL_SetRenderDrawColor(renderer, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, GRID_COLOR.a);
         SDL_Rect lineRect
         {
-            panelX + MARGIN, 
-            yPos + ITEM_HEIGHT, 
-            PANEL_WIDTH - MARGIN * 2, 
+            panelX + MARGIN,
+            yPos + ITEM_HEIGHT,
+            PANEL_WIDTH - MARGIN * 2,
             LINE_HEIGHT
         };
         SDL_RenderFillRect(renderer, &lineRect);
@@ -528,19 +642,29 @@ void MathVisualizer::renderPanel()
         yPos += TOTAL_HEIGHT;
     }
 
-    if (SDL_GetTicks() - cursorBlink > 1000) 
+    SDL_RenderSetClipRect(renderer, nullptr);
+
+    if (SDL_GetTicks() - cursorBlink > 1000)
         cursorBlink = SDL_GetTicks();
 }
+
 void MathVisualizer::renderEquations()
 {
     struct tools
     {
-        static size_t lerp(double a, double b, size_t size)
+        static bool isundef(double value) 
         {
-            return static_cast<size_t>(std::round(a * size / (a - b)));
+            return std::isnan(value) || std::isinf(value);
+        }
+        static int lerp(double a, double b, size_t size)
+        {
+            return static_cast<int>(std::round(a * size / (a - b)));
         }
         static void marching_squares(SDL_Renderer*renderer,size_t sx,size_t sy,size_t step,double v11,double v12,double v21,double v22)
         {
+            if(isundef(v11)||isundef(v12)||isundef(v21)||isundef(v22))
+                return ;
+
             const char state =
                 ((v11 >= 0) ? 1 : 0) |
                 ((v12 >= 0) ? 2 : 0) |
@@ -597,6 +721,8 @@ void MathVisualizer::renderEquations()
         if(eq.type==RelationalOperator::INVALID)
             continue;
 
+        SDL_SetRenderDrawColor(renderer, eq.color.r, eq.color.g, eq.color.b, eq.color.a);
+
         try
         {
             for (size_t ypos = 0, y = 0; ypos < rows; ypos++, y += lstep)
@@ -612,9 +738,25 @@ void MathVisualizer::renderEquations()
                     xNode->data->value = temp_point.x;
                     yNode->data->value = temp_point.y;
                     cubes[ypos][xpos] = Equation::evaluator.evaluate(eq.value);
+
+                    if (eq.type == RelationalOperator::NOT_EQUAL)
+                    {
+                        if (std::abs(cubes[ypos][xpos]) <= 1e16)
+                            SDL_RenderDrawPoint(renderer, x, y);
+                    }
+                    else if (eq.type == RelationalOperator::GREATER_THAN || eq.type == RelationalOperator::GREATER_THAN_OR_EQUAL)
+                    {
+                        if (cubes[ypos][xpos] > 0)
+                            SDL_RenderDrawPoint(renderer, x, y);
+                    }
+                    else if (eq.type == RelationalOperator::LESS_THAN || eq.type == RelationalOperator::LESS_THAN_OR_EQUAL)
+                    {
+                        if (cubes[ypos][xpos] < 0)
+                            SDL_RenderDrawPoint(renderer, x, y);
+                    }
                 }
             }
-            SDL_SetRenderDrawColor(renderer,eq.color.r,eq.color.g,eq.color.b,eq.color.a);
+            if (eq.type == RelationalOperator::EQUAL || eq.type == RelationalOperator::GREATER_THAN_OR_EQUAL || eq.type == RelationalOperator::LESS_THAN_OR_EQUAL)
             {
                 for (size_t ypos = 0, y = 0; ypos < rows-ffts; ypos+=ffts, y += step)
                 {
@@ -639,8 +781,8 @@ void MathVisualizer::renderEquations()
                                     yNode->data->value = temp_point.y;
                                     cubes[lypos][lxpos] = Equation::evaluator.evaluate(eq.value);
                                 }
-                                if(count_x&&count_y)
-                                    tools::marching_squares(renderer,lx-lstep,ly-lstep,lstep,cubes[lypos-1][lxpos-1],cubes[lypos-1][lxpos],cubes[lypos][lxpos-1],cubes[lypos][lxpos]);
+                                    if(count_x&&count_y)
+                                        tools::marching_squares(renderer,lx-lstep,ly-lstep,lstep,cubes[lypos-1][lxpos-1],cubes[lypos-1][lxpos],cubes[lypos][lxpos-1],cubes[lypos][lxpos]);
                             }
                     }
                 }
@@ -703,14 +845,9 @@ void MathVisualizer::handlePanelClick(const SDL_MouseButtonEvent& e)
     const SDL_Rect& delBtn = itemList.getDelButton();
 
     if (SDL_PointInRect(&mouse, &addBtn))
-    {
-        itemList.add(std::string());
-        itemList.select(itemList.getEquations().size() - 1);
-    }
+        itemList.select(itemList.add(std::string()));
     else if (SDL_PointInRect(&mouse, &delBtn))
-    {
         itemList.removeSelected();
-    }
     else
     {
         const int listStartY = Constants::MARGIN;
@@ -748,7 +885,7 @@ private:
     Uint32 cursorBlink = 0;
     int visibleItems = 0;
 
-    size_t ffts = 2u;
+    size_t ffts = 4u;
     size_t lstep = 5u;
     size_t step;
     decltype(Equation::evaluator.vars->search("x")) xNode;
@@ -763,6 +900,8 @@ private:
 
 public:
     MathVisualizer():
+        xNode(nullptr),
+        yNode(nullptr),
         cubes(Constants::WINDOW_HEIGHT/lstep+1,std::vector<double>(panelX/lstep+1)),
         step(lstep*ffts)
     {}
@@ -779,7 +918,7 @@ void drawCoordinateGrid(SDL_Renderer* renderer, TTF_Font* font, const MathRange&
 {
     using namespace Constants;
     const double baseGridSize = std::pow(10.0, std::floor(std::log10(range.xSpan())));
-    const double gridSize = baseGridSize / 2.0;
+    const double gridSize = baseGridSize/2;
     const int precision = std::max(0, 3 - static_cast<int>(std::log10(gridSize)));
 
     SDL_SetRenderDrawColor(renderer, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, GRID_COLOR.a);
@@ -809,14 +948,13 @@ void drawCoordinateGrid(SDL_Renderer* renderer, TTF_Font* font, const MathRange&
     SDL_RenderDrawLine(renderer, xStart.x, xStart.y, xEnd.x, xEnd.y);
     SDL_RenderDrawLine(renderer, yStart.x, yStart.y, yEnd.x, yEnd.y);
 
-    SDL_Color textColor = TEXT_COLOR;
     for (double x = std::ceil(range.xMin / gridSize) * gridSize; x <= range.xMax; x += gridSize)
     {
         if (std::abs(x) < 1e-10)
             continue;
         Point2D p = mathToScreen({x, 0}, range);
         std::string label = formatNumber(x, precision);
-        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), textColor);
+        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), TEXT_COLOR);
         if (!surface)
             continue;
         SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
@@ -832,7 +970,7 @@ void drawCoordinateGrid(SDL_Renderer* renderer, TTF_Font* font, const MathRange&
             continue;
         Point2D p = mathToScreen({0, y}, range);
         std::string label = formatNumber(y, precision);
-        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), textColor);
+        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), TEXT_COLOR);
         if (!surface)
             continue;
         SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
@@ -1569,6 +1707,8 @@ namespace eval_init
                              { return std::log2(args[0]); }};
         func<T> sqrt_op{1, size_max, [](const T *args)
                         { return std::sqrt(args[0]); }};
+        func<T> abs_op{1, size_max, [](const T *args)
+                        { return std::abs(args[0]); }};
 
         calc.funcs->insert("sin", sin_op);
         calc.funcs->insert("cos", cos_op);
@@ -1584,6 +1724,7 @@ namespace eval_init
         calc.funcs->insert("ln", ln_op);
         calc.funcs->insert("log2", log2_op);
         calc.funcs->insert("sqrt", sqrt_op);
+        calc.funcs->insert("abs", abs_op);
 
         // 注册数学常量
         var<T> pi{vartype::CONSTVAR,std::acos(T(-1))};

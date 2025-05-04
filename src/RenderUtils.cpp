@@ -4,7 +4,7 @@ void drawCoordinateGrid(SDL_Renderer* renderer, TTF_Font* font, const MathRange&
 {
     using namespace Constants;
     const double baseGridSize = std::pow(10.0, std::floor(std::log10(range.xSpan())));
-    const double gridSize = baseGridSize / 2.0;
+    const double gridSize = baseGridSize/2;
     const int precision = std::max(0, 3 - static_cast<int>(std::log10(gridSize)));
 
     SDL_SetRenderDrawColor(renderer, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, GRID_COLOR.a);
@@ -34,14 +34,13 @@ void drawCoordinateGrid(SDL_Renderer* renderer, TTF_Font* font, const MathRange&
     SDL_RenderDrawLine(renderer, xStart.x, xStart.y, xEnd.x, xEnd.y);
     SDL_RenderDrawLine(renderer, yStart.x, yStart.y, yEnd.x, yEnd.y);
 
-    SDL_Color textColor = TEXT_COLOR;
     for (double x = std::ceil(range.xMin / gridSize) * gridSize; x <= range.xMax; x += gridSize)
     {
         if (std::abs(x) < 1e-10)
             continue;
         Point2D p = mathToScreen({x, 0}, range);
         std::string label = formatNumber(x, precision);
-        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), textColor);
+        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), TEXT_COLOR);
         if (!surface)
             continue;
         SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
@@ -57,7 +56,7 @@ void drawCoordinateGrid(SDL_Renderer* renderer, TTF_Font* font, const MathRange&
             continue;
         Point2D p = mathToScreen({0, y}, range);
         std::string label = formatNumber(y, precision);
-        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), textColor);
+        SDL_Surface* surface = TTF_RenderUTF8_Blended(font, label.c_str(), TEXT_COLOR);
         if (!surface)
             continue;
         SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);

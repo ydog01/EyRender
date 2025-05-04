@@ -32,7 +32,7 @@ void MathVisualizer::handleEvents()
     SDL_Event e;
     while (SDL_PollEvent(&e))
     {
-        itemList.handleInput(e);
+        itemList.handleInput(e,renderer);
         switch (e.type)
         {
             case SDL_QUIT:
@@ -111,7 +111,7 @@ void MathVisualizer::renderText(const std::string& text, int x, int y, int maxWi
 void MathVisualizer::renderPanel()
 {
     using namespace Constants;
-    SDL_Rect panelRect = {panelX, 0, PANEL_WIDTH, WINDOW_HEIGHT};
+    SDL_Rect panelRect = { panelX, 0, PANEL_WIDTH, WINDOW_HEIGHT };
     SDL_SetRenderDrawColor(renderer, PANEL_COLOR.r, PANEL_COLOR.g, PANEL_COLOR.b, 255);
     SDL_RenderFillRect(renderer, &panelRect);
 
@@ -127,54 +127,125 @@ void MathVisualizer::renderPanel()
     const int startIdx = itemList.getScrollOffset();
     const int endIdx = std::min(startIdx + visibleItems, static_cast<int>(itemList.getEquations().size()));
 
-    int yPos = MARGIN;
-    for (int i = startIdx; i < endIdx; ++i) 
+    SDL_Rect listClipRect
     {
-        SDL_Rect itemRect = 
-        {
-            panelX + MARGIN, 
-            yPos, 
-            PANEL_WIDTH - MARGIN * 2, 
+        panelX + MARGIN,
+        MARGIN,
+        PANEL_WIDTH - MARGIN * 2,
+        visibleItems * TOTAL_HEIGHT
+    };
+    SDL_RenderSetClipRect(renderer, &listClipRect);
+
+    int yPos = MARGIN;
+    for (int i = startIdx; i < endIdx; ++i)
+    {
+        const bool isSelected = (i == itemList.getSelected());
+        const Equation& eq = itemList.getEquations()[i];
+
+        SDL_Rect itemRect = {
+            panelX + MARGIN,
+            yPos,
+            PANEL_WIDTH - MARGIN * 2,
             ITEM_HEIGHT
         };
 
-        if (i == itemList.getSelected()) 
-        {
+        if (isSelected) {
             SDL_SetRenderDrawColor(renderer, SELECT_COLOR.r, SELECT_COLOR.g, SELECT_COLOR.b, 255);
             SDL_RenderFillRect(renderer, &itemRect);
         }
-
-        const std::string& text = itemList.getEquations()[i].expression;
-
-        renderText(text, itemRect.x + 5, itemRect.y + 3, itemRect.w - 10);
-
-        if (itemList.isEditing() && i == itemList.getSelected()) 
+        const int maxTextWidth = itemRect.w - 10;
+        SDL_Rect textRect
         {
-            const std::string& editingText = itemList.getEquations()[i].expression;
+            itemRect.x + 5,
+            itemRect.y + 3,
+            maxTextWidth,
+            ITEM_HEIGHT - 6
+        };
+
+        if (itemList.isEditing() && isSelected)
+        {
+            const std::string& text = eq.expression;
             const int cursorPos = itemList.getCursorPos();
 
-            std::string beforeCursor = editingText.substr(0, cursorPos);
-            int textWidth = 0;
-            TTF_SizeText(font, beforeCursor.c_str(), &textWidth, nullptr);
+            int fullTextWidth = 0;
+            TTF_SizeUTF8(font, text.c_str(), &fullTextWidth, nullptr);
 
-            if (SDL_GetTicks() - cursorBlink < 500) 
+            std::string beforeCursor = text.substr(0, cursorPos);
+            int cursorPixelPos = 0;
+            TTF_SizeUTF8(font, beforeCursor.c_str(), &cursorPixelPos, nullptr);
+
+            int renderOffset = 0;
+            if (fullTextWidth > maxTextWidth)
             {
-                SDL_SetRenderDrawColor(renderer, EDIT_COLOR.r, EDIT_COLOR.g, EDIT_COLOR.b, 255);
-                SDL_RenderDrawLine(renderer, 
-                    itemRect.x + 5 + textWidth,  
-                    itemRect.y + 2,             
-                    itemRect.x + 5 + textWidth,  
-                    itemRect.y + ITEM_HEIGHT - 4 
-                );
+                const int halfWidth = maxTextWidth / 2;
+                renderOffset = cursorPixelPos - halfWidth;
+                renderOffset = std::max(0, renderOffset);
+                renderOffset = std::min(renderOffset, fullTextWidth - maxTextWidth);
+            }
+
+            SDL_Surface* surface = TTF_RenderUTF8_Blended(font, text.c_str(), TEXT_COLOR);
+            if (surface)
+            {
+                SDL_Rect srcRect
+                {
+                    renderOffset, 0,
+                    std::min(maxTextWidth, surface->w - renderOffset),
+                    surface->h
+                };
+
+                SDL_Rect dstRect
+                {
+                    textRect.x,
+                    textRect.y,
+                    srcRect.w,
+                    surface->h
+                };
+
+                SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+                SDL_RenderCopy(renderer, texture, &srcRect, &dstRect);
+                SDL_DestroyTexture(texture);
+                SDL_FreeSurface(surface);
+
+                if (SDL_GetTicks() - cursorBlink < 500)
+                {
+                    int visualCursorX = textRect.x + (cursorPixelPos - renderOffset);
+                    visualCursorX = std::max(textRect.x, std::min(visualCursorX, textRect.x + maxTextWidth - 2));
+
+                    SDL_SetRenderDrawColor(renderer, EDIT_COLOR.r, EDIT_COLOR.g, EDIT_COLOR.b, 255);
+                    SDL_RenderDrawLine(renderer,
+                        visualCursorX, textRect.y + 2,
+                        visualCursorX, textRect.y + textRect.h - 4
+                    );
+                }
+            }
+        }
+        else
+        {
+            SDL_Surface* surface = TTF_RenderUTF8_Blended(font, eq.expression.c_str(), TEXT_COLOR);
+            if (surface)
+            {
+                SDL_Rect srcRect = { 0, 0, std::min(surface->w, maxTextWidth), surface->h };
+
+                SDL_Rect dstRect = {
+                    textRect.x,
+                    textRect.y + (textRect.h - surface->h) / 2,
+                    srcRect.w,
+                    surface->h
+                };
+
+                SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+                SDL_RenderCopy(renderer, texture, &srcRect, &dstRect);
+                SDL_DestroyTexture(texture);
+                SDL_FreeSurface(surface);
             }
         }
 
         SDL_SetRenderDrawColor(renderer, GRID_COLOR.r, GRID_COLOR.g, GRID_COLOR.b, GRID_COLOR.a);
         SDL_Rect lineRect
         {
-            panelX + MARGIN, 
-            yPos + ITEM_HEIGHT, 
-            PANEL_WIDTH - MARGIN * 2, 
+            panelX + MARGIN,
+            yPos + ITEM_HEIGHT,
+            PANEL_WIDTH - MARGIN * 2,
             LINE_HEIGHT
         };
         SDL_RenderFillRect(renderer, &lineRect);
@@ -182,19 +253,29 @@ void MathVisualizer::renderPanel()
         yPos += TOTAL_HEIGHT;
     }
 
-    if (SDL_GetTicks() - cursorBlink > 1000) 
+    SDL_RenderSetClipRect(renderer, nullptr);
+
+    if (SDL_GetTicks() - cursorBlink > 1000)
         cursorBlink = SDL_GetTicks();
 }
+
 void MathVisualizer::renderEquations()
 {
     struct tools
     {
-        static size_t lerp(double a, double b, size_t size)
+        static bool isundef(double value) 
         {
-            return static_cast<size_t>(std::round(a * size / (a - b)));
+            return std::isnan(value) || std::isinf(value);
+        }
+        static int lerp(double a, double b, size_t size)
+        {
+            return static_cast<int>(std::round(a * size / (a - b)));
         }
         static void marching_squares(SDL_Renderer*renderer,size_t sx,size_t sy,size_t step,double v11,double v12,double v21,double v22)
         {
+            if(isundef(v11)||isundef(v12)||isundef(v21)||isundef(v22))
+                return ;
+
             const char state =
                 ((v11 >= 0) ? 1 : 0) |
                 ((v12 >= 0) ? 2 : 0) |
@@ -251,6 +332,8 @@ void MathVisualizer::renderEquations()
         if(eq.type==RelationalOperator::INVALID)
             continue;
 
+        SDL_SetRenderDrawColor(renderer, eq.color.r, eq.color.g, eq.color.b, eq.color.a);
+
         try
         {
             for (size_t ypos = 0, y = 0; ypos < rows; ypos++, y += lstep)
@@ -266,9 +349,25 @@ void MathVisualizer::renderEquations()
                     xNode->data->value = temp_point.x;
                     yNode->data->value = temp_point.y;
                     cubes[ypos][xpos] = Equation::evaluator.evaluate(eq.value);
+
+                    if (eq.type == RelationalOperator::NOT_EQUAL)
+                    {
+                        if (std::abs(cubes[ypos][xpos]) <= 1e16)
+                            SDL_RenderDrawPoint(renderer, x, y);
+                    }
+                    else if (eq.type == RelationalOperator::GREATER_THAN || eq.type == RelationalOperator::GREATER_THAN_OR_EQUAL)
+                    {
+                        if (cubes[ypos][xpos] > 0)
+                            SDL_RenderDrawPoint(renderer, x, y);
+                    }
+                    else if (eq.type == RelationalOperator::LESS_THAN || eq.type == RelationalOperator::LESS_THAN_OR_EQUAL)
+                    {
+                        if (cubes[ypos][xpos] < 0)
+                            SDL_RenderDrawPoint(renderer, x, y);
+                    }
                 }
             }
-            SDL_SetRenderDrawColor(renderer,eq.color.r,eq.color.g,eq.color.b,eq.color.a);
+            if (eq.type == RelationalOperator::EQUAL || eq.type == RelationalOperator::GREATER_THAN_OR_EQUAL || eq.type == RelationalOperator::LESS_THAN_OR_EQUAL)
             {
                 for (size_t ypos = 0, y = 0; ypos < rows-ffts; ypos+=ffts, y += step)
                 {
@@ -293,8 +392,8 @@ void MathVisualizer::renderEquations()
                                     yNode->data->value = temp_point.y;
                                     cubes[lypos][lxpos] = Equation::evaluator.evaluate(eq.value);
                                 }
-                                if(count_x&&count_y)
-                                    tools::marching_squares(renderer,lx-lstep,ly-lstep,lstep,cubes[lypos-1][lxpos-1],cubes[lypos-1][lxpos],cubes[lypos][lxpos-1],cubes[lypos][lxpos]);
+                                    if(count_x&&count_y)
+                                        tools::marching_squares(renderer,lx-lstep,ly-lstep,lstep,cubes[lypos-1][lxpos-1],cubes[lypos-1][lxpos],cubes[lypos][lxpos-1],cubes[lypos][lxpos]);
                             }
                     }
                 }
@@ -357,14 +456,9 @@ void MathVisualizer::handlePanelClick(const SDL_MouseButtonEvent& e)
     const SDL_Rect& delBtn = itemList.getDelButton();
 
     if (SDL_PointInRect(&mouse, &addBtn))
-    {
-        itemList.add(std::string());
-        itemList.select(itemList.getEquations().size() - 1);
-    }
+        itemList.select(itemList.add(std::string()));
     else if (SDL_PointInRect(&mouse, &delBtn))
-    {
         itemList.removeSelected();
-    }
     else
     {
         const int listStartY = Constants::MARGIN;
