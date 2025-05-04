@@ -44,9 +44,6 @@ void ItemList::endEdit()
     eq.value.clear();
     eq.type = RelationalOperator::INVALID;
 
-    selected = -1;
-    cursorPos = 0;
-
     if (eq.expression.empty())
         return;
 
@@ -93,12 +90,8 @@ void ItemList::endEdit()
         if (eq.type == RelationalOperator::NOT_EQUAL || eq.type == RelationalOperator::GREATER_THAN_OR_EQUAL || eq.type == RelationalOperator::LESS_THAN_OR_EQUAL)
             pos++;
             
-        auto temp = Equation::evaluator.parse(eq.expression.substr(pos));
-
-        eq.value.consts.insert(eq.value.consts.end(), temp.consts.begin(), temp.consts.end());
-        eq.value.funcs.insert(eq.value.funcs.end(), temp.funcs.begin(), temp.funcs.end());
-        eq.value.vars.insert(eq.value.vars.end(), temp.vars.begin(), temp.vars.end());
-        eq.value.index += temp.index;
+        Equation::evaluator.parse(eq.value,eq.expression.substr(pos));
+        
         eq.value.index.push_back('f');
         eq.value.funcs.push_back(Equation::evaluator.infix_ops->search("-")->data);
     }
@@ -107,6 +100,9 @@ void ItemList::endEdit()
         eq.value.clear();
         eq.type = RelationalOperator::INVALID;
     }
+
+    selected = -1;
+    cursorPos = 0;
 }
 
 void ItemList::handleInput(const SDL_Event& e)
@@ -138,7 +134,7 @@ void ItemList::handleInput(const SDL_Event& e)
             case SDLK_BACKSPACE:
                 if (cursorPos > 0)
                 {
-                    eq.expression.erase(cursorPos - 1, 1);
+                    eq.expression.erase(cursorPos - 1u);
                     cursorPos--;
                 }
                 break;

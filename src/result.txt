@@ -30,6 +30,7 @@ eval::evaluator<char, double> Equation::evaluator = eval_init::create_real_eval<
 #pragma once
 #include <string>
 #include "eval_init.hpp"
+#include <SDL.h>
 
 enum class RelationalOperator : int
 {
@@ -46,8 +47,9 @@ struct Equation
 {
     static eval::evaluator<char,double> evaluator;
     std::string expression;
-    RelationalOperator type;
+    RelationalOperator type = RelationalOperator::INVALID;
     eval::epre<double> value;//left - right
+    SDL_Color color{241,49,49,255};
 };
 ------------------ItemList.cpp------------------
 #include "ItemList.hpp"
@@ -96,9 +98,6 @@ void ItemList::endEdit()
     eq.value.clear();
     eq.type = RelationalOperator::INVALID;
 
-    selected = -1;
-    cursorPos = 0;
-
     if (eq.expression.empty())
         return;
 
@@ -145,12 +144,8 @@ void ItemList::endEdit()
         if (eq.type == RelationalOperator::NOT_EQUAL || eq.type == RelationalOperator::GREATER_THAN_OR_EQUAL || eq.type == RelationalOperator::LESS_THAN_OR_EQUAL)
             pos++;
             
-        auto temp = Equation::evaluator.parse(eq.expression.substr(pos));
-
-        eq.value.consts.insert(eq.value.consts.end(), temp.consts.begin(), temp.consts.end());
-        eq.value.funcs.insert(eq.value.funcs.end(), temp.funcs.begin(), temp.funcs.end());
-        eq.value.vars.insert(eq.value.vars.end(), temp.vars.begin(), temp.vars.end());
-        eq.value.index += temp.index;
+        Equation::evaluator.parse(eq.value,eq.expression.substr(pos));
+        
         eq.value.index.push_back('f');
         eq.value.funcs.push_back(Equation::evaluator.infix_ops->search("-")->data);
     }
@@ -159,6 +154,9 @@ void ItemList::endEdit()
         eq.value.clear();
         eq.type = RelationalOperator::INVALID;
     }
+
+    selected = -1;
+    cursorPos = 0;
 }
 
 void ItemList::handleInput(const SDL_Event& e)
@@ -190,7 +188,7 @@ void ItemList::handleInput(const SDL_Event& e)
             case SDLK_BACKSPACE:
                 if (cursorPos > 0)
                 {
-                    eq.expression.erase(cursorPos - 1, 1);
+                    eq.expression.erase(cursorPos - 1u);
                     cursorPos--;
                 }
                 break;
@@ -231,7 +229,7 @@ class ItemList
 private:
     std::vector<Equation> equations;
     int selected = -1;
-    int cursorPos = 0;
+    size_t cursorPos = 0;
     int scrollOffset = 0;
     SDL_Rect addButton{0, 0, 0, 0};
     SDL_Rect delButton{0, 0, 0, 0};
@@ -246,7 +244,7 @@ public:
     void select(int index);
     void handleScroll(int delta);
     
-    const std::vector<Equation>& getEquations() const { return equations; }
+    std::vector<Equation>& getEquations() { return equations; }
     int getSelected() const { return selected; }
     bool isEditing() const { return selected != -1; }
     const SDL_Rect& getAddButton() const { return addButton; }
@@ -368,6 +366,9 @@ bool MathVisualizer::init()
 
     Equation::evaluator.vars->insert("x",{});
     Equation::evaluator.vars->insert("y",{});
+
+    xNode = Equation::evaluator.vars->search("x");
+    yNode = Equation::evaluator.vars->search("y");
 
     return true;
 }
@@ -530,6 +531,128 @@ void MathVisualizer::renderPanel()
     if (SDL_GetTicks() - cursorBlink > 1000) 
         cursorBlink = SDL_GetTicks();
 }
+void MathVisualizer::renderEquations()
+{
+    struct tools
+    {
+        static size_t lerp(double a, double b, size_t size)
+        {
+            return static_cast<size_t>(std::round(a * size / (a - b)));
+        }
+        static void marching_squares(SDL_Renderer*renderer,size_t sx,size_t sy,size_t step,double v11,double v12,double v21,double v22)
+        {
+            const char state =
+                ((v11 >= 0) ? 1 : 0) |
+                ((v12 >= 0) ? 2 : 0) |
+                ((v21 >= 0) ? 4 : 0) |
+                ((v22 >= 0) ? 8 : 0);
+
+            if (state == 0 || state == 0b1111)
+                return;
+
+            switch (state)
+            {
+            case 0b0001:
+            case 0b1110:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx, sy + lerp(v11, v21, step));
+                break;
+            case 0b0010:
+            case 0b1101:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx + step, sy + lerp(v12, v22, step));
+                break;
+            case 0b0100:
+            case 0b1011:
+                SDL_RenderDrawLine(renderer, sx + lerp(v21, v22, step), sy + step, sx, sy + lerp(v11, v21, step));
+                break;
+            case 0b1000:
+            case 0b0111:
+                SDL_RenderDrawLine(renderer, sx + lerp(v21, v22, step), sy + step, sx + step, sy + lerp(v12, v22, step));
+                break;
+            case 0b0011:
+            case 0b1100:
+                SDL_RenderDrawLine(renderer, sx, sy + lerp(v11, v21, step), sx + step, sy + lerp(v12, v22, step));
+                break;
+            case 0b1010:
+            case 0b0101:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx + lerp(v21, v22, step), sy + step);
+                break;
+            case 0b0110:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx + step, sy + lerp(v12, v22, step));
+                SDL_RenderDrawLine(renderer, sx + lerp(v21, v22, step), sy + step, sx, sy + lerp(v11, v21, step));
+                break;
+            case 0b1001:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx, sy + lerp(v11, v21, step));
+                SDL_RenderDrawLine(renderer, sx + lerp(v21, v22, step), sy + step, sx + step, sy + lerp(v12, v22, step));
+                break;
+            }
+        }
+    };
+
+    const size_t rows = cubes.size();
+    const size_t cols = cubes.front().size();
+    Point2D temp_point;
+
+    for (Equation &eq : itemList.getEquations())
+    {
+        if(eq.type==RelationalOperator::INVALID)
+            continue;
+
+        try
+        {
+            for (size_t ypos = 0, y = 0; ypos < rows; ypos++, y += lstep)
+            {
+                for (size_t xpos = 0, x = 0; xpos < cols; xpos++, x += lstep)
+                {
+                    if (xpos % ffts || ypos % ffts)
+                    {
+                        cubes[ypos][xpos] = std::numeric_limits<double>::max();
+                        continue;
+                    }
+                    temp_point = screenToMath(x, y, currentRange);
+                    xNode->data->value = temp_point.x;
+                    yNode->data->value = temp_point.y;
+                    cubes[ypos][xpos] = Equation::evaluator.evaluate(eq.value);
+                }
+            }
+            SDL_SetRenderDrawColor(renderer,eq.color.r,eq.color.g,eq.color.b,eq.color.a);
+            {
+                for (size_t ypos = 0, y = 0; ypos < rows-ffts; ypos+=ffts, y += step)
+                {
+                    for (size_t xpos = 0, x = 0; xpos < cols-ffts; xpos+=ffts, x += step)
+                    {
+                        const char state =
+                            ((cubes[ypos][xpos] >= 0) ? 1 : 0) |
+                            ((cubes[ypos][xpos + ffts] >= 0) ? 2 : 0) |
+                            ((cubes[ypos + ffts][xpos] >= 0) ? 4 : 0) |
+                            ((cubes[ypos + ffts][xpos + ffts] >= 0) ? 8 : 0);
+    
+                        if (state == 0 || state == 0b1111)
+                            continue;
+    
+                        for (size_t lypos = ypos, count_y = 0, ly = y; count_y <= ffts; count_y++, lypos++, ly += lstep)
+                            for (size_t lxpos = xpos, count_x = 0, lx = x; count_x <= ffts; count_x++, lxpos++, lx += lstep)
+                            {
+                                if(cubes[lypos][lxpos]==std::numeric_limits<double>::max())
+                                {
+                                    temp_point = screenToMath(lx,ly,currentRange);
+                                    xNode->data->value = temp_point.x;
+                                    yNode->data->value = temp_point.y;
+                                    cubes[lypos][lxpos] = Equation::evaluator.evaluate(eq.value);
+                                }
+                                if(count_x&&count_y)
+                                    tools::marching_squares(renderer,lx-lstep,ly-lstep,lstep,cubes[lypos-1][lxpos-1],cubes[lypos-1][lxpos],cubes[lypos][lxpos-1],cubes[lypos][lxpos]);
+                            }
+                    }
+                }
+            }   
+        }
+        catch(...)
+        {
+            eq.type = RelationalOperator::INVALID;
+            continue;
+        }
+    }
+}
 
 void MathVisualizer::render()
 {
@@ -537,9 +660,10 @@ void MathVisualizer::render()
     SDL_SetRenderDrawColor(renderer, BACKGROUND_COLOR.r, BACKGROUND_COLOR.g, BACKGROUND_COLOR.b, 255);
     SDL_RenderClear(renderer);
 
-    SDL_Rect graphArea{0, 0, 1200, WINDOW_HEIGHT};
+    SDL_Rect graphArea{0, 0, panelX, WINDOW_HEIGHT};
     SDL_RenderSetClipRect(renderer, &graphArea);
     drawCoordinateGrid(renderer, font, currentRange);
+    renderEquations();
     SDL_RenderSetClipRect(renderer, nullptr);
 
     renderPanel();
@@ -624,12 +748,24 @@ private:
     Uint32 cursorBlink = 0;
     int visibleItems = 0;
 
+    size_t ffts = 2u;
+    size_t lstep = 5u;
+    size_t step;
+    decltype(Equation::evaluator.vars->search("x")) xNode;
+    decltype(Equation::evaluator.vars->search("y")) yNode;
+
+    std::vector<std::vector<double>> cubes;
+
     void renderText(const std::string& text, int x, int y, int maxWidth);
     void renderPanel();
+    void renderEquations();
     void handlePanelClick(const SDL_MouseButtonEvent& e);
 
 public:
-    MathVisualizer() = default;
+    MathVisualizer():
+        cubes(Constants::WINDOW_HEIGHT/lstep+1,std::vector<double>(panelX/lstep+1)),
+        step(lstep*ffts)
+    {}
     bool init();
     void handleEvents();
     void render();

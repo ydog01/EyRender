@@ -21,6 +21,9 @@ bool MathVisualizer::init()
     Equation::evaluator.vars->insert("x",{});
     Equation::evaluator.vars->insert("y",{});
 
+    xNode = Equation::evaluator.vars->search("x");
+    yNode = Equation::evaluator.vars->search("y");
+
     return true;
 }
 
@@ -182,6 +185,128 @@ void MathVisualizer::renderPanel()
     if (SDL_GetTicks() - cursorBlink > 1000) 
         cursorBlink = SDL_GetTicks();
 }
+void MathVisualizer::renderEquations()
+{
+    struct tools
+    {
+        static size_t lerp(double a, double b, size_t size)
+        {
+            return static_cast<size_t>(std::round(a * size / (a - b)));
+        }
+        static void marching_squares(SDL_Renderer*renderer,size_t sx,size_t sy,size_t step,double v11,double v12,double v21,double v22)
+        {
+            const char state =
+                ((v11 >= 0) ? 1 : 0) |
+                ((v12 >= 0) ? 2 : 0) |
+                ((v21 >= 0) ? 4 : 0) |
+                ((v22 >= 0) ? 8 : 0);
+
+            if (state == 0 || state == 0b1111)
+                return;
+
+            switch (state)
+            {
+            case 0b0001:
+            case 0b1110:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx, sy + lerp(v11, v21, step));
+                break;
+            case 0b0010:
+            case 0b1101:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx + step, sy + lerp(v12, v22, step));
+                break;
+            case 0b0100:
+            case 0b1011:
+                SDL_RenderDrawLine(renderer, sx + lerp(v21, v22, step), sy + step, sx, sy + lerp(v11, v21, step));
+                break;
+            case 0b1000:
+            case 0b0111:
+                SDL_RenderDrawLine(renderer, sx + lerp(v21, v22, step), sy + step, sx + step, sy + lerp(v12, v22, step));
+                break;
+            case 0b0011:
+            case 0b1100:
+                SDL_RenderDrawLine(renderer, sx, sy + lerp(v11, v21, step), sx + step, sy + lerp(v12, v22, step));
+                break;
+            case 0b1010:
+            case 0b0101:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx + lerp(v21, v22, step), sy + step);
+                break;
+            case 0b0110:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx + step, sy + lerp(v12, v22, step));
+                SDL_RenderDrawLine(renderer, sx + lerp(v21, v22, step), sy + step, sx, sy + lerp(v11, v21, step));
+                break;
+            case 0b1001:
+                SDL_RenderDrawLine(renderer, sx + lerp(v11, v12, step), sy, sx, sy + lerp(v11, v21, step));
+                SDL_RenderDrawLine(renderer, sx + lerp(v21, v22, step), sy + step, sx + step, sy + lerp(v12, v22, step));
+                break;
+            }
+        }
+    };
+
+    const size_t rows = cubes.size();
+    const size_t cols = cubes.front().size();
+    Point2D temp_point;
+
+    for (Equation &eq : itemList.getEquations())
+    {
+        if(eq.type==RelationalOperator::INVALID)
+            continue;
+
+        try
+        {
+            for (size_t ypos = 0, y = 0; ypos < rows; ypos++, y += lstep)
+            {
+                for (size_t xpos = 0, x = 0; xpos < cols; xpos++, x += lstep)
+                {
+                    if (xpos % ffts || ypos % ffts)
+                    {
+                        cubes[ypos][xpos] = std::numeric_limits<double>::max();
+                        continue;
+                    }
+                    temp_point = screenToMath(x, y, currentRange);
+                    xNode->data->value = temp_point.x;
+                    yNode->data->value = temp_point.y;
+                    cubes[ypos][xpos] = Equation::evaluator.evaluate(eq.value);
+                }
+            }
+            SDL_SetRenderDrawColor(renderer,eq.color.r,eq.color.g,eq.color.b,eq.color.a);
+            {
+                for (size_t ypos = 0, y = 0; ypos < rows-ffts; ypos+=ffts, y += step)
+                {
+                    for (size_t xpos = 0, x = 0; xpos < cols-ffts; xpos+=ffts, x += step)
+                    {
+                        const char state =
+                            ((cubes[ypos][xpos] >= 0) ? 1 : 0) |
+                            ((cubes[ypos][xpos + ffts] >= 0) ? 2 : 0) |
+                            ((cubes[ypos + ffts][xpos] >= 0) ? 4 : 0) |
+                            ((cubes[ypos + ffts][xpos + ffts] >= 0) ? 8 : 0);
+    
+                        if (state == 0 || state == 0b1111)
+                            continue;
+    
+                        for (size_t lypos = ypos, count_y = 0, ly = y; count_y <= ffts; count_y++, lypos++, ly += lstep)
+                            for (size_t lxpos = xpos, count_x = 0, lx = x; count_x <= ffts; count_x++, lxpos++, lx += lstep)
+                            {
+                                if(cubes[lypos][lxpos]==std::numeric_limits<double>::max())
+                                {
+                                    temp_point = screenToMath(lx,ly,currentRange);
+                                    xNode->data->value = temp_point.x;
+                                    yNode->data->value = temp_point.y;
+                                    cubes[lypos][lxpos] = Equation::evaluator.evaluate(eq.value);
+                                }
+                                if(count_x&&count_y)
+                                    tools::marching_squares(renderer,lx-lstep,ly-lstep,lstep,cubes[lypos-1][lxpos-1],cubes[lypos-1][lxpos],cubes[lypos][lxpos-1],cubes[lypos][lxpos]);
+                            }
+                    }
+                }
+            }   
+        }
+        catch(...)
+        {
+            eq.type = RelationalOperator::INVALID;
+            continue;
+        }
+    }
+}
 
 void MathVisualizer::render()
 {
@@ -189,9 +314,10 @@ void MathVisualizer::render()
     SDL_SetRenderDrawColor(renderer, BACKGROUND_COLOR.r, BACKGROUND_COLOR.g, BACKGROUND_COLOR.b, 255);
     SDL_RenderClear(renderer);
 
-    SDL_Rect graphArea{0, 0, 1200, WINDOW_HEIGHT};
+    SDL_Rect graphArea{0, 0, panelX, WINDOW_HEIGHT};
     SDL_RenderSetClipRect(renderer, &graphArea);
     drawCoordinateGrid(renderer, font, currentRange);
+    renderEquations();
     SDL_RenderSetClipRect(renderer, nullptr);
 
     renderPanel();
