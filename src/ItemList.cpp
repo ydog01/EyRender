@@ -211,17 +211,14 @@ void ItemList::selectColor(SDL_Renderer*renderer)
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 
     SDL_Point mouse;
+    bool buttondown = false;
 
     while (isRunning)
     {
         frameStart = SDL_GetTicks();
 
         SDL_GetMouseState(&mouse.x, &mouse.y);
-        if (SDL_PointInRect(&mouse, &colorRect))
-        {
-            lg = mouse.y - colorRect.y;
-            lb = mouse.x - colorRect.x;
-        }
+
         while (SDL_PollEvent(&e))
         {
             switch (e.type)
@@ -236,13 +233,24 @@ void ItemList::selectColor(SDL_Renderer*renderer)
                     equations[selected].color = { r,g,b };
                 break;
             case SDL_MOUSEBUTTONDOWN:
-                if (SDL_PointInRect(&mouse, &colorRect))
-                    g = lg, b = lb;
-                else if (SDL_PointInRect(&mouse, &rRect))
-                    r = mouse.y - rRect.y;
+                buttondown = true;
+                break;
+            case SDL_MOUSEBUTTONUP:
+                buttondown = false;
                 break;
             }
         }
+
+
+        if (SDL_PointInRect(&mouse, &colorRect))
+        {
+            lg = mouse.y - colorRect.y;
+            lb = mouse.x - colorRect.x;
+            if (buttondown)
+                g = lg, b = lb;
+        }
+        else if (buttondown && SDL_PointInRect(&mouse, &rRect))
+            r = mouse.y - rRect.y;
 
         SDL_SetRenderDrawColor(renderer, r, lg, lb, 255);
         SDL_RenderFillRect(renderer, &currentRect);
