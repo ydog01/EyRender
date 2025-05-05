@@ -181,6 +181,10 @@ void ItemList::handleInput(const SDL_Event& e, SDL_Renderer* renderer)
                 if(e.key.keysym.mod & KMOD_CTRL)
                     selectColor(renderer);
                 break;
+            case SDLK_w:
+                if (e.key.keysym.mod & KMOD_CTRL)
+                    equations[selected].shown=!equations[selected].shown;
+                break;
         }
     }
 }

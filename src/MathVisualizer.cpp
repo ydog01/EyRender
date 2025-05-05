@@ -329,7 +329,7 @@ void MathVisualizer::renderEquations()
 
     for (Equation &eq : itemList.getEquations())
     {
-        if(eq.type==RelationalOperator::INVALID)
+        if(!eq.shown||eq.type==RelationalOperator::INVALID)
             continue;
 
         SDL_SetRenderDrawColor(renderer, eq.color.r, eq.color.g, eq.color.b, eq.color.a);

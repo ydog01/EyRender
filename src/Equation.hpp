@@ -21,4 +21,5 @@ struct Equation
     RelationalOperator type = RelationalOperator::INVALID;
     eval::epre<double> value;//left - right
     SDL_Color color{241,49,49,255};
+    bool shown=true;
 };
