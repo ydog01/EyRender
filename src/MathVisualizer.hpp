@@ -19,7 +19,7 @@ private:
     Uint32 cursorBlink = 0;
     int visibleItems = 0;
 
-    size_t ffts = 4u;
+    size_t ffts = 2u;
     size_t lstep = 5u;
     size_t step;
     decltype(Equation::evaluator.vars->search("x")) xNode;
